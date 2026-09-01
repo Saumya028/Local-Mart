@@ -47,6 +47,14 @@ export default function LoginPage() {
           {mode === "signin" ? "Log in" : "Create an account"}
         </h1>
 
+        {mode === "signup" && (
+          <p className="text-xs text-gray-500 text-center -mt-2">
+            Every account starts as a customer. Selling on LocalMart
+            requires your account to be approved by a platform admin
+            afterward.
+          </p>
+        )}
+
         <input
           type="email"
           required

@@ -1,72 +1,112 @@
 # LocalMart Backend (FastAPI)
 
-## What exists right now (Phase 0 + 1 + 2 + 3)
+## What exists right now (Phase 0 through 5)
 
 ```
 app/
   main.py                # app entrypoint, CORS setup, router registration
   core/
-    config.py            # reads all settings from environment variables
-    db.py                 # async Postgres connection (SQLAlchemy)
-    redis_client.py        # async Redis connection
-    security.py             # JWT verification + get_current_user / require_role
-    cache.py                  # generic cache-aside helper
-    utils.py                   # parse_uuid_or_404 helper
-    cart.py                     # Redis-backed cart storage (new)
-    idempotency.py                # dedupes retried checkout requests (new)
+    config.py, db.py, redis_client.py, security.py
+    cache.py                  # now also has invalidate() (new)
+    utils.py, cart.py, idempotency.py
   models/
     base.py, profile.py, address.py, shop.py, product.py
-    order.py, order_item.py, payment.py (new)
+    order.py, order_item.py, payment.py
   schemas/
-    profile.py, shop.py, product.py, category.py
-    order.py (new)
+    profile.py, category.py, address.py
+    shop.py (added ShopCreate/ShopUpdate)
+    product.py (added ProductCreate/ProductUpdate)
+    order.py (added DashboardOrderOut/OrderStatusUpdate)
   routers/
-    health.py, auth.py, categories.py, shops.py, products.py
-    cart.py (new)                # GET/POST/PUT/DELETE cart endpoints
-    orders.py (new)               # POST /orders (checkout), GET /orders/{id}
-    webhooks.py (new)              # POST /webhooks/stripe
-migrations/                 # Alembic (0001 core tables, 0002 orders/payments — new)
+    health.py, auth.py, categories.py, products.py
+    cart.py, addresses.py, webhooks.py
+    shops.py (added POST /shops — "become a seller")
+    orders.py (unchanged this phase)
+    shop_dashboard.py (new)        # the whole Shop Dashboard API
+migrations/                 # Alembic (0001, 0002 — no new migration this phase)
 scripts/
-  seed.py                   # populates demo shops/products
+  seed.py
 ```
 
 ## Setup
 
-1. **Install dependencies**: `pip install -r requirements.txt` (adds `stripe` this phase)
-2. **Env**: `cp .env.example .env`, fill in the usual vars plus (new) `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` — both from your [Stripe Dashboard](https://dashboard.stripe.com) in **test mode** (free to create an account; no real card ever gets charged with test-mode keys).
-3. **Migrate**: `alembic upgrade head` — adds `orders`, `order_items`, `payments` tables
-4. **Seed** (if you haven't already): `python -m scripts.seed`
-5. **Forward Stripe webhooks to your local server** (new, required for payment confirmation to work locally):
-   ```bash
-   # Install the Stripe CLI (https://docs.stripe.com/stripe-cli), then:
-   stripe login
-   stripe listen --forward-to localhost:8000/webhooks/stripe
-   ```
-   This prints a webhook signing secret starting `whsec_...` — put that in `STRIPE_WEBHOOK_SECRET`. Leave this command running in its own terminal whenever you're testing checkout locally; it's how Stripe's servers reach your machine, which they otherwise can't since `localhost` isn't publicly reachable.
-6. **Run**: `uvicorn app.main:app --reload --port 8000`
+No new env vars, no new migration — this phase is pure application logic
+on top of tables that already existed. Same setup as Phase 4.
+
+## Try the new endpoints
+
+```bash
+# Become a seller (any logged-in user can do this):
+curl -X POST http://localhost:8000/shops \
+  -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name": "My Shop", "category": "Groceries"}'
+
+# See your shops / add a product / see incoming orders / see revenue:
+curl http://localhost:8000/dashboard/shops -H "Authorization: Bearer YOUR_TOKEN"
+curl http://localhost:8000/dashboard/orders -H "Authorization: Bearer YOUR_TOKEN"
+curl http://localhost:8000/dashboard/summary -H "Authorization: Bearer YOUR_TOKEN"
+```
 
 ## Why it's built this way
 
-- **`core/config.py`** centralizes every environment variable in one typed object (`settings`). Nothing else reads `os.environ` directly.
-- **`core/db.py` / `core/redis_client.py`** each create one shared connection pool for the app's lifetime.
-- **`core/security.py`** (Phase 1):
-  - Verifies the JWT Supabase issued (proves *who* the user is), but deliberately does **not** trust any role/permission claim from inside that token — role always comes from our own `profiles` table.
-  - **Auth fixes (1.1/1.2):** handles both Supabase's HS256 and ES256 token schemes automatically, and tolerates small clock drift (`leeway=10`) between machines.
-  - `get_current_user` auto-creates a `profiles` row on first login, defaulting to `role="customer"`.
-- **`models/product.py`** has an `attributes` JSONB column — deliberately avoiding a separate NoSQL database.
-- **`migrations/`** — Alembic tracks schema changes over time; never edit tables directly in the Supabase dashboard.
-- **`core/cache.py`** (Phase 2) — one reusable cache-aside function; `/categories`, `/shops` (unfiltered), and `/products/{id}` are cached, search is not (queries vary too much to benefit).
-- **`core/cart.py`** (Phase 3) — the cart lives entirely in Redis as a hash (`cart:{user_id}` → `{product_id: quantity}`), never in Postgres. It's ephemeral, high-write, and doesn't need the durability guarantees a real database gives you — exactly the workload Redis is for.
-- **`core/idempotency.py`** — wraps checkout so a retried request (network blip right as the first attempt actually succeeded) returns the same result instead of creating a second set of orders and charging the card twice. The frontend generates one key per checkout attempt and sends it as an `Idempotency-Key` header.
-- **`routers/orders.py` — the checkout flow, the most important code in this phase:**
-  1. Reads the cart from Redis, but re-fetches every product's real price/stock from Postgres — **the cart's cached view is never trusted for money**.
-  2. Groups cart lines by shop — one `Order` row per shop, since this is a multi-vendor marketplace (see `models/order.py`'s docstring).
-  3. Reserves stock with `UPDATE products SET stock_qty = stock_qty - qty WHERE stock_qty >= qty RETURNING id` — a single atomic statement. This is what makes it race-safe: I verified this exact pattern under a simulated race (two buyers, one unit left) and it correctly lets exactly one succeed, never both, never neither. A naive "read stock, check in Python, then write" approach would have a race window here that this doesn't.
-  4. Nothing is committed to Postgres until the Stripe `PaymentIntent` is *also* successfully created — if Stripe's API call fails, the whole attempt (including the stock reservation) rolls back automatically, because the session is never committed.
-  5. Only creates a `"pending"` order — actual confirmation happens in the webhook, asynchronously, because that's genuinely when Stripe tells us the payment succeeded or failed, not a moment before.
-- **`routers/webhooks.py`** — verifies Stripe's signature on every incoming webhook (otherwise anyone who found the URL could fake a "payment succeeded" event). On `payment_intent.succeeded`, marks the order `"confirmed"`. On `payment_intent.payment_failed`, marks it `"payment_failed"` **and restores the reserved stock** — holding onto inventory for an order that's never going to be paid for would incorrectly block other customers.
-- **Search is still a plain `ILIKE` substring match**, not full-text search — unchanged trade-off from Phase 2, still fine at this scale.
+- **`POST /shops` (in `shops.py`) IS the "become a seller" action.** Any
+  logged-in customer can create a shop; doing so elevates their `role`
+  from `customer` to `shop_owner` in the same transaction. There's no
+  separate application/approval flow yet — a natural fit for a future
+  admin feature (approving new shops before they go live).
+- **`shop_dashboard.py` — every mutating endpoint relies on one function:
+  `_user_owns_shop(shop, user)`.** It's deliberately pulled out as a
+  standalone function, not inlined, specifically so it's unit-testable
+  without a live database. I tested it directly: a shop owner correctly
+  gets denied on another shop's products/orders, an admin is allowed
+  everywhere, and a `None` shop (bad ID) is never treated as owned. This
+  is the exact check the roadmap called out as worth testing explicitly —
+  a shop owner hitting another shop's data must get a clean 403, never a
+  leak.
+- **Design correction (5.2): selling is NOT self-service.** An earlier
+  version of this phase let any customer become a shop_owner just by
+  creating a shop — that turned out to be the wrong call. Every
+  `/dashboard/*` endpoint and `POST /shops` now require
+  `role="shop_owner"` or `"admin"` via `require_role(...)`, and there is
+  **no endpoint that lets an account promote itself.** Becoming a
+  shop_owner is an explicit action taken on the account from outside —
+  today that means `scripts/promote_user.py` (see below), and once Phase
+  6 ships, a real "approve this seller" action in the Admin Panel. This
+  matches how real marketplaces actually onboard sellers: vetted, not
+  self-granted.
+- **`scripts/promote_user.py`** — the stop-gap for turning a customer
+  into a shop_owner until the Admin Panel exists:
+  `python -m scripts.promote_user someone@example.com shop_owner`. The
+  target account must have logged in at least once already (a profile
+  row is only created on first authenticated request).
+- **`shop_id` in request bodies is never trusted by itself.** `POST
+  /dashboard/products` takes a `shop_id`, but the endpoint still looks up
+  that shop and checks ownership before creating anything — a malicious
+  or buggy client sending someone else's shop ID gets a 403, not a
+  successful write into a shop they don't own.
+- **`DELETE /dashboard/products/{id}` deactivates, never hard-deletes.**
+  A real `DELETE` would violate the `RESTRICT` foreign key from
+  `order_items` the moment anyone's ever bought the product — and even
+  before that, sellers generally want discontinued products to stay in
+  their history, not vanish. This is exactly the `is_active` flag the
+  rest of the catalog already respects.
+- **Order status transitions are a fixed forward-only map**
+  (`confirmed → shipped/cancelled`, `shipped → delivered`) —
+  `pending → confirmed/payment_failed` is deliberately absent from that
+  map, since only Stripe's webhook is allowed to make that call (only
+  Stripe actually knows if the payment succeeded).
+- **Cache invalidation, finally wired up properly.** Phase 2 mentioned
+  "invalidate on price/stock update" as a TODO — `core/cache.py` now has
+  an `invalidate()` helper, and every dashboard write that changes
+  customer-visible data (`update_product`, `deactivate_product`,
+  `create_shop`, `update_my_shop`) calls it. A price or stock change is
+  now visible to shoppers immediately, not up to a minute later.
+- **`GET /dashboard/summary` uses one `GROUP BY` query with a `FILTER`
+  clause** (`func.count(...).filter(Order.status == "confirmed")`) rather
+  than looping and querying once per shop — the kind of query worth
+  writing well upfront, since an N+1 pattern here would scale badly the
+  moment someone owns several shops.
 
-## What's next (Phase 4)
+## What's next (Phase 6)
 
-Post-purchase: order history/tracking (`GET /orders`), address CRUD, and email/notification on order status change.
+Admin Panel — shop approvals, user management, and platform-wide metrics, plus an audit trail for admin actions.

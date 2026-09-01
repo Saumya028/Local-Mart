@@ -30,10 +30,11 @@ class Settings(BaseSettings):
     # Which frontend origin is allowed to call this API (CORS)
     frontend_origin: str = "http://localhost:3000"
 
-    # Stripe test-mode keys (Stripe Dashboard -> Developers -> API keys)
-    stripe_secret_key: str = ""
-    # From `stripe listen` (local dev) or the webhook endpoint's settings (production)
-    stripe_webhook_secret: str = ""
+    # Razorpay test-mode keys (Razorpay Dashboard -> Settings -> API Keys)
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    # From Razorpay Dashboard -> Settings -> Webhooks -> the webhook's "Secret"
+    razorpay_webhook_secret: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

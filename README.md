@@ -1,73 +1,50 @@
-# LocalMart — Steps 0–3: Foundations, Auth, Browse, Cart & Checkout
+# LocalMart — Steps 0–5: Foundations through Shop Dashboard
 
-Step 0 proved the wiring. Step 1 added authentication. Step 2 added
-Landing/Search/Product Detail. **Step 3 adds Cart & Checkout — the
-transactional core of the whole platform.** This is the phase where
-correctness matters more than speed: stock can't oversell, payments can't
-double-charge, and a cart spanning multiple shops has to split correctly
-into separate orders per shop.
+Step 0 proved the wiring. Step 1 added auth. Step 2 added browsing. Step 3
+added cart & checkout. Step 4 added order history/tracking and addresses.
+Step 5 added the Shop Dashboard.
 
-## Platform model (worth restating)
+**Design correction (5.2): selling is not self-service.** The first
+version of Phase 5 let any customer become a shop_owner just by creating
+a shop from the "Sell" link. That was the wrong call for a real
+marketplace — sellers should be vetted, not self-granted. Now:
 
-LocalMart is a **platform**, not a seller — shops own their own listings
-via the Shop Dashboard (Phase 5). This shows up concretely here: checkout
-creates **one Order per shop** in the cart, never one combined order that
-blends two different sellers' items together.
+- A plain customer account **cannot** create a shop or reach the Shop
+  Dashboard at all — every relevant endpoint requires `role="shop_owner"`
+  or `"admin"`, enforced on the backend.
+- The "Sell" link in the header **only appears** for accounts that
+  already have that role.
+- Becoming a shop_owner is an explicit action taken from outside the
+  account itself — today that's `backend/scripts/promote_user.py`; once
+  Phase 6 ships, it becomes a real "approve this seller" action in the
+  Admin Panel.
 
 ## What you need before running this
 
-1. A free **Supabase** project → https://supabase.com
-2. A free **Upstash Redis** database → https://upstash.com
-3. A free **Stripe** account (test mode) → https://dashboard.stripe.com
-4. The **Stripe CLI** installed → https://docs.stripe.com/stripe-cli (for local webhook testing)
+Same as Phase 4/5 — no new services, no new migration.
 
 ## Running it locally
 
-Open **three** terminals this phase (one more than before, for Stripe's webhook forwarding).
-
-**Terminal 1 — Stripe webhook forwarding:**
-```bash
-stripe login
-stripe listen --forward-to localhost:8000/webhooks/stripe
-```
-Copy the `whsec_...` secret it prints — you'll need it in the backend's `.env`.
-
-**Terminal 2 — backend:**
-```bash
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env      # fill in DATABASE_URL, REDIS_URL, SUPABASE_URL, SUPABASE_JWT_SECRET,
-                           # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (from Terminal 1)
-alembic upgrade head      # adds orders / order_items / payments tables
-python -m scripts.seed    # only if you haven't already
-uvicorn app.main:app --reload --port 8000
-```
-
-**Terminal 3 — frontend:**
-```bash
-cd frontend
-npm install
-cp .env.local.example .env.local   # add NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY too
-npm run dev
-```
+Same three-terminal setup as before — see the folder READMEs.
 
 ## Verifying this step worked
 
-1. Log in, browse to any product, click **Add to cart**.
-2. Open **Cart** (header) — confirm quantity/remove controls work.
-3. **Proceed to checkout**, enter a delivery address, continue to payment.
-4. Pay with Stripe's test card **4242 4242 4242 4242** (any future expiry, any CVC).
-5. You should see "Payment successful!" on the page, AND see the webhook event logged in Terminal 1 and the backend's Terminal 2 logs.
-6. In Supabase's Table Editor: `orders.status` should be `confirmed`, and the purchased product's `stock_qty` should be reduced by the quantity bought.
-
-**Try the interesting case too:** add products from two different shops to your cart (e.g. something from Fresh Valley Groceries AND something from TechHub Electronics) and check out together — you should end up with 2 separate rows in the `orders` table, one per shop, both linked to the same Stripe payment.
+1. Log in as a plain customer — confirm **"Sell" does not appear** in the header.
+2. Try navigating directly to `/shop/dashboard` anyway — confirm you see a plain "Selling isn't available for your account yet" message, not an error or a dashboard UI.
+3. From `backend/`, run:
+   ```bash
+   python -m scripts.promote_user your-email@example.com shop_owner
+   ```
+4. Refresh — "Sell" now appears, and the dashboard shows "Create your shop."
+5. Create a shop, add a product, and confirm the full seller flow from Phase 5's original testing steps still works (buy as a different account, see the order appear in the dashboard, mark it shipped, check the summary).
 
 ## Folder-specific details
 
-- `backend/README.md` — backend structure and setup, explained
-- `frontend/README.md` — frontend structure and setup, explained
+- `backend/README.md` — what changed and why
+- `frontend/README.md` — what changed and why
 
-## Next step (Phase 4)
+## Next step (Phase 6)
 
-Post-purchase: order history/tracking page, and a real address book (replacing the free-text delivery address field from this phase).
+Admin Panel — approving new sellers with a real UI (replacing the
+promotion script), user management, and platform-wide metrics, with every
+admin action logged for audit purposes.

@@ -1,12 +1,15 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import cache_get_or_set
+from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
+from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import Shop
-from app.schemas.shop import ShopOut
+from app.models import Profile, Shop
+from app.schemas.shop import ShopCreate, ShopOut
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
@@ -44,6 +47,35 @@ async def list_shops(
         .limit(50)
     )
     return result.scalars().all()
+
+
+@router.post("", response_model=ShopOut)
+async def create_shop(
+    payload: ShopCreate,
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Creating a shop is restricted to accounts that are ALREADY
+    shop_owner or admin — not self-service for a plain customer. Becoming
+    a shop_owner in the first place is an explicit promotion, not
+    something an account grants itself by clicking a button (see
+    scripts/promote_user.py until the Admin Panel in Phase 6 ships a
+    proper UI for this).
+
+    This lets an existing shop owner run more than one shop, while a
+    customer hitting this endpoint gets a clean 403 from require_role
+    before ever reaching this function body.
+    """
+    shop = Shop(id=uuid.uuid4(), owner_id=user.id, name=payload.name, category=payload.category)
+    db.add(shop)
+    await db.commit()
+    await db.refresh(shop)
+
+    # A brand new shop should show up in "Shops near you" and the
+    # category counts immediately, not up to 60s/5min later.
+    await invalidate("shops:list", "categories:list")
+    return shop
 
 
 @router.get("/{shop_id}", response_model=ShopOut)

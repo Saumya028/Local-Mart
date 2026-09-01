@@ -1,59 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
-import { apiFetch } from "@/lib/apiClient";
-
-type Profile = {
-  id: string;
-  email: string;
-  full_name: string | null;
-  role: string;
-};
+import { useAuth } from "@/contexts/AuthContext";
 
 /**
- * This has to be a Client Component (unlike the health check on the home
- * page) because it needs the Supabase session, which lives in the
- * browser. It's the piece that proves the FULL auth chain works:
- * Supabase login -> JWT stored in browser -> sent to FastAPI ->
- * verified -> profile row read/created in Postgres -> returned here.
+ * Now a thin consumer of AuthContext rather than fetching /auth/me
+ * itself — the Header (which renders this) and the Shop Dashboard page
+ * both need the same profile/role, so it's fetched once, centrally, and
+ * shared, instead of every component re-fetching it independently.
  */
 export default function AuthStatus() {
-  const [loading, setLoading] = useState(true);
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function load() {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-
-      if (!data.session) {
-        setLoggedIn(false);
-        setLoading(false);
-        return;
-      }
-
-      setLoggedIn(true);
-      try {
-        const me = await apiFetch("/auth/me");
-        if (mounted) setProfile(me);
-      } catch (err) {
-        if (mounted) setFetchError((err as Error).message);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const { profile, loading, loggedIn } = useAuth();
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -72,20 +30,12 @@ export default function AuthStatus() {
     );
   }
 
-  if (fetchError) {
-    return (
-      <p className="text-sm text-red-500 max-w-sm text-center">
-        Logged in, but the API call failed: {fetchError}
-      </p>
-    );
-  }
-
   return (
     <div className="text-sm space-y-1 text-center">
       <p>
         Logged in as <span className="font-medium">{profile?.email}</span>
       </p>
-      <p className="text-gray-500">Role: {profile?.role}</p>
+      <p className="text-gray-500">Role: {profile?.role ?? "unknown"}</p>
       <button onClick={handleLogout} className="text-xs text-red-500 underline">
         Log out
       </button>
