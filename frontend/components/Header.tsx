@@ -19,6 +19,7 @@ export default function Header() {
   // require_role on every dashboard/shop-creation endpoint), but there's
   // no reason to dangle a link in front of someone that just 403s.
   const canSell = profile?.role === "shop_owner" || profile?.role === "admin";
+  const isAdmin = profile?.role === "admin";
 
   return (
     <header className="border-b border-gray-100">
@@ -36,6 +37,11 @@ export default function Header() {
           {canSell && (
             <Link href="/shop/dashboard" className="text-gray-600 hover:text-gray-900">
               Sell
+            </Link>
+          )}
+          {isAdmin && (
+            <Link href="/admin" className="text-gray-600 hover:text-gray-900">
+              Admin
             </Link>
           )}
           <Link href="/cart" className="text-gray-600 hover:text-gray-900">
