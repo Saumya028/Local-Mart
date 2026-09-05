@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,11 @@ class Profile(Base):
     # "customer" is the safe default for anyone who just signs up.
     # Becoming a "shop_owner" happens through an explicit action later
     # (Phase 5), never just by passing a different value at signup.
-    role: Mapped[str] = mapped_column(String, default="customer", server_default="customer")
+    # index=True (Phase 7 hardening pass): admin.py's list_users filters
+    # WHERE role = X, and platform_metrics counts rows per role — both
+    # scan by this column specifically.
+    role: Mapped[str] = mapped_column(
+        String, default="customer", server_default="customer", index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

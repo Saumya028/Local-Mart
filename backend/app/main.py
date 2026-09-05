@@ -1,12 +1,25 @@
 import logging
+import uuid
 
 import redis.exceptions
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
-from app.routers import (
+from app.core.logging_config import setup_logging
+from app.core.observability import init_sentry
+from app.core.request_context import set_request_id
+
+# Logging must be configured, and Sentry initialized, before anything
+# else below has a chance to log or raise — including router imports,
+# which construct module-level objects (e.g. the Razorpay client in
+# orders.py/webhooks.py) that could themselves warn or fail.
+setup_logging(settings.log_level)
+init_sentry()
+
+from app.routers import (  # noqa: E402
     addresses,
     admin,
     auth,
@@ -28,12 +41,41 @@ app = FastAPI(
     description="Backend for the LocalMart multi-vendor marketplace platform.",
 )
 
-# CORS: only the frontend's own origin is allowed to call this API with
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """
+    Gives every request a `request_id` — either the one the caller
+    already supplied via an `X-Request-ID` header (the frontend's
+    apiClient.ts generates one per call), or a fresh UUID if it didn't.
+    Stored in a contextvar (core/request_context.py) so every log line
+    emitted anywhere while handling this request — in a router, in
+    core/cache.py, wherever — picks it up automatically without it being
+    threaded through every function call by hand.
+
+    Echoed back as a response header too, so the frontend (or a curl'ing
+    developer) can see exactly which ID to search server logs for if a
+    request fails: "trace one request across frontend -> backend" from
+    the roadmap's own wording.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        set_request_id(request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+app.add_middleware(RequestIDMiddleware)
+
+# CORS: only known frontend origin(s) are allowed to call this API with
 # credentials. We deliberately do NOT use "*" here — that's a common
 # shortcut in tutorials that becomes a real security gap in production.
+# `cors_origins` (core/config.py) splits FRONTEND_ORIGIN on commas so
+# staging and prod can both be listed without code changes.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +104,33 @@ async def redis_error_handler(request: Request, exc: redis.exceptions.RedisError
     return JSONResponse(
         status_code=503,
         content={"detail": "A temporary storage issue occurred. Please try again."},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    The safety net underneath everything else. FastAPI's own default
+    handlers still deal with `HTTPException` (a deliberate 404/403/etc.
+    from a route) and request validation errors before this ever runs —
+    this only catches genuinely UNEXPECTED exceptions: a bug, a null
+    somewhere it shouldn't be, a third-party client raising something we
+    didn't anticipate.
+
+    Without this, an unhandled exception would either leak a raw Python
+    traceback to the client (if DEBUG-style behavior is on somewhere in
+    the stack) or just show up as an opaque, unlogged connection reset —
+    neither of which is "a failed [...] fetch shouldn't break the whole
+    page" from the roadmap. This turns it into one clean JSON 500 with a
+    request_id the person can report, while the real traceback still
+    goes to structured logs (and Sentry, if configured) for us to debug.
+    """
+    logger.exception(
+        "Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Something went wrong on our end. Please try again."},
     )
 
 

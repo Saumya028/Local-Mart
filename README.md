@@ -1,50 +1,84 @@
-# LocalMart — Steps 0–6: Foundations through Admin Panel
+# LocalMart — Steps 0–7: Foundations through Production Hardening
 
-Step 0 proved the wiring. Step 1 added auth. Step 2 added browsing. Step 3
-added cart & checkout. Step 4 added order history/tracking and addresses.
-Step 5 added the Shop Dashboard. Step 6 adds the Admin Panel.
+Step 0 proved the wiring. Step 1 added auth. Step 2 added browsing. Step
+3 added cart & checkout. Step 4 added order history/tracking and
+addresses. Step 5 added the Shop Dashboard. Step 6 added the Admin
+Panel. Step 7 is the production hardening pass.
 
-**Design correction (5.2): selling is not self-service.** The first
-version of Phase 5 let any customer become a shop_owner just by
-creating a shop from the "Sell" link. That was the wrong call for a real
-marketplace — sellers should be vetted, not self-granted. Now:
+Per the roadmap's own framing, this phase isn't building new habits from
+scratch — it's validating (and in several places, actually finishing)
+habits earlier phases were supposed to already have. Two honest findings
+from that validation, both real and both fixed:
 
-- A plain customer account **cannot** create a shop or reach the Shop
-  Dashboard at all — every relevant endpoint requires `role="shop_owner"`
-  or `"admin"`, enforced on the backend.
-- The "Sell" link in the header **only appears** for accounts that
-  already have that role.
-- Becoming a shop_owner is now a real "approve this seller" action in
-  the Admin Panel, taken by an existing admin — not something an
-  account can do to itself.
+- **There was no CI, and no tests, anywhere in this project until now.**
+  Phase 0 asked for "Basic CI... runs lint + build on every push."
+  Phases 1, 3, 5, and 6 each separately said "don't skip: write tests."
+  None of it ever got built. This phase adds both — a real (if
+  deliberately narrow) test suite, lint on both apps, and a GitHub
+  Actions workflow that runs all of it on every push. See each folder's
+  README for exactly what's covered and what honestly still isn't.
+- **A dependency vulnerability scan found real CVEs, not hypothetical
+  ones** — including a critical-severity one in the version of Next.js
+  this project was built on. Both apps' dependencies were audited,
+  patched where a safe patch existed, and the one exception (a
+  Starlette CVE whose fix breaks compatibility with the pinned FastAPI
+  version) is tracked and documented rather than silently ignored — see
+  `backend/README.md`.
 
-## What's new in Phase 6 — Admin Panel
+## What's new in Phase 7 — Production Hardening
 
-- **User management**: search users by email, and approve/promote or
-  demote any account's role (`customer` / `shop_owner` / `admin`) from
-  a real UI — this replaces `scripts/promote_user.py` for day-to-day
-  use. The script still exists, narrowed to one job: bootstrapping your
-  very first admin account (see `backend/README.md`).
-- **Shop moderation**: see every shop on the platform (not just your
-  own) with its owner's email, and deactivate/reactivate any of them —
-  reusing the same `is_active` flag a shop owner already toggles for
-  their own shop.
-- **Platform metrics**: total users, shop owners, admins, total/active
-  shops, total/active products, total/confirmed orders, and GMV
-  (confirmed-order revenue, platform-wide).
-- **Audit trail**: every role change and shop status change made
-  through the panel is logged — who did it, what changed, and when —
-  written in the same database transaction as the change itself, so an
-  action can never happen without being recorded (or be "recorded"
-  without actually happening).
-- An admin **cannot change their own role** from the panel — a
-  deliberate lockout guard, not a trust issue (see `backend/README.md`
-  for the reasoning).
+**Security**
+- Redis-backed rate limiting on checkout (10/min per user) and
+  `/auth/me` (30/min per IP) — fails open if Redis itself is down, since
+  rate limiting is a defense layer, not the thing guaranteeing
+  correctness.
+- CORS now accepts a comma-separated list of origins (staging + prod
+  together) — still never a bare `"*"`.
+- Security response headers on the frontend (`X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`).
+- `pip-audit` and `npm audit` now run in CI on every push.
+
+**Reliability**
+- A runnable backup/restore verification script
+  (`backend/scripts/backup_restore_check.sh`) — pg_dump your real
+  database, restore it into a throwaway local Postgres, sanity-check the
+  row counts. "A backup you've never restored isn't a backup," made into
+  a five-minute check instead of a leap of faith.
+- A catch-all exception handler on the backend, and `error.tsx` /
+  `global-error.tsx` / `not-found.tsx` boundaries on the frontend — an
+  unhandled error anywhere no longer leaks a raw traceback or blanks the
+  whole page.
+
+**Observability**
+- Structured JSON logging with a request ID that's generated by the
+  frontend, sent as `X-Request-ID`, echoed back by the backend, and
+  attached to every log line either side emits while handling that
+  request — the actual mechanism behind "trace one request across
+  frontend -> backend."
+- Optional Sentry integration on both apps — a true no-op with nothing
+  installed-and-idle when no DSN is configured, fully wired up the
+  moment one is.
+
+**Performance**
+- A real index audit (migration `0004`): missing foreign-key indexes,
+  hot `WHERE`/`ORDER BY` columns that had none, and composite indexes
+  replacing redundant single-column ones on the two busiest query
+  patterns (order history, the Shop Dashboard's order list).
+
+**Compliance**
+- Privacy Policy and Terms of Service pages — explicitly labeled as
+  working templates that need real legal review, not a launch-ready
+  substitute for one.
+- Confirmed (unchanged from Phase 3): card details are entered directly
+  into Razorpay's own hosted widget and never touch this app's servers.
 
 ## What you need before running this
 
-Same services as before, plus **one new migration** (`0003`, adds
-`audit_logs`) — see `backend/README.md`'s Setup section.
+Same services as before, plus **one new migration** (`0004`, hardening
+indexes) — see `backend/README.md`'s Setup section. The frontend also
+needed a major Next.js version bump (14 → 16) to close a critical
+security vulnerability — see `frontend/README.md`'s Setup section before
+running `npm install` on an existing checkout.
 
 ## Running it locally
 
@@ -52,28 +86,22 @@ Same three-terminal setup as before — see the folder READMEs.
 
 ## Verifying this step worked
 
-1. Bootstrap your first admin (from `backend/`):
-   ```bash
-   python -m scripts.promote_user your-email@example.com admin
-   ```
-2. Log in as that account — confirm **"Admin" appears in the header** (and doesn't for a plain customer account).
-3. In the Admin Panel's **Metrics** tab, confirm the numbers look sane (they should match what you already have seeded/tested).
-4. In **Users**, search for a customer's email and promote them to `shop_owner` — confirm they can now reach `/shop/dashboard` and create a shop.
-5. In **Shops**, deactivate that new shop — confirm it disappears from the public "Shops near you" list and search almost immediately (cache invalidation), then reactivate it.
-6. In **Audit Log**, confirm both actions above show up, newest first, with your admin email and the before/after values.
-7. Confirm a `shop_owner` (non-admin) account navigating to `/admin` directly sees the "restricted" message, not a 403 flash or the panel itself.
+1. `cd backend && pip install -r requirements-dev.txt && ruff check . && pytest tests/ -v` — should be clean, 9 tests passing.
+2. `cd frontend && npm install && npm run lint && npx tsc --noEmit && npm run build` — should be clean (a handful of known, tracked lint *warnings* are fine — see `frontend/README.md`; zero *errors*).
+3. Push a commit (or open a PR) and confirm `.github/workflows/ci.yml` runs both jobs green.
+4. Hit checkout 11 times in a row as the same user within a minute — the 11th should return `429`.
+5. `curl -i http://localhost:8000/health | grep -i x-request-id` — confirm the header comes back.
+6. Visit a nonexistent URL on the frontend — confirm the friendly 404, not a framework default.
+7. Scroll to the bottom of any page — confirm the Privacy Policy / Terms of Service links work.
 
 ## Folder-specific details
 
-- `backend/README.md` — what changed and why
-- `frontend/README.md` — what changed and why
+- `backend/README.md` — what changed and why, including the honest gaps (integration tests, the tracked Starlette CVE)
+- `frontend/README.md` — what changed and why, including the Next.js 16 upgrade story
 
-## Next step (Phase 7)
+## Next step (Phase 8)
 
-Production hardening pass — rate limiting, a secrets/CORS/dependency
-audit, confirmed DB backups + a tested restore, error tracking and
-structured logging, and a check of cache hit rates and indexes now that
-the full feature set (Phases 0–6) is in place. Per the roadmap's own
-rule, this isn't building these habits from scratch — auth tests,
-ownership checks, and cache invalidation have been part of every phase
-so far — it's validating them under one dedicated pass.
+Launch & beyond — custom domain + SSL on both frontend and backend, a
+staging environment kept alive permanently, and then watching real
+usage to decide what actually needs scaling, rather than pre-optimizing
+for load that doesn't exist yet.

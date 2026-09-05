@@ -15,6 +15,13 @@ export default function AuthStatus() {
 
   async function handleLogout() {
     await supabase.auth.signOut();
+    // A full page reload (not router.push) is deliberate here: it
+    // guarantees AuthContext and any other component's in-memory state
+    // resets completely on logout, rather than relying on every
+    // consumer to correctly react to a soft client-side navigation.
+    // Logout is infrequent enough that the extra reload cost is a
+    // non-issue.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/";
   }
 

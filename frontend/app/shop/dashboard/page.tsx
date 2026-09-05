@@ -67,7 +67,6 @@ export default function ShopDashboardPage() {
     } else if (!authLoading) {
       setLoadingShops(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSell, authLoading]);
 
   if (authLoading || (canSell && loadingShops)) {

@@ -39,7 +39,8 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String)  # e.g. "profile", "shop"
     target_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    # Free-form before/after snapshot — e.g. {"old_role": "customer", "new_role": "shop_owner", "email": "..."}
+    # Free-form before/after snapshot — e.g. {"old_role": "customer",
+    # "new_role": "shop_owner", "email": "..."}
     details: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

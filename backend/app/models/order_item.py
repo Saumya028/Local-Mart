@@ -14,8 +14,11 @@ class OrderItem(Base):
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), index=True
     )
+    # index=True (Phase 7 hardening pass): every foreign key should have
+    # one, and this specific column is also joined against directly in
+    # orders.py's get_order (OrderItem.product_id == Product.id).
     product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT")
+        UUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), index=True
     )
 
     quantity: Mapped[int] = mapped_column(Integer)
