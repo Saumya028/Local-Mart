@@ -4,6 +4,27 @@ import { Shop } from "./types";
 
 export type TabKey = "dashboard" | "orders" | "products" | "inventory" | "analytics";
 
+function statusLabel(shop: Shop | null): string {
+  if (!shop) return "";
+  if (shop.approval_status === "pending") return "Pending Approval";
+  if (shop.approval_status === "rejected") return "Rejected";
+  return shop.is_active ? "Open" : "Closed";
+}
+
+function statusColor(shop: Shop | null): string {
+  if (!shop) return "text-gray-400";
+  if (shop.approval_status === "pending") return "text-amber-600";
+  if (shop.approval_status === "rejected") return "text-red-600";
+  return "text-emerald-600";
+}
+
+function statusDot(shop: Shop | null): string {
+  if (!shop) return "bg-gray-300";
+  if (shop.approval_status === "pending") return "bg-amber-500";
+  if (shop.approval_status === "rejected") return "bg-red-500";
+  return "bg-emerald-500";
+}
+
 const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
   {
     key: "dashboard",
@@ -106,9 +127,9 @@ export function Sidebar({
         ) : (
           <p className="text-sm font-semibold text-gray-800 truncate">{shop?.name}</p>
         )}
-        <p className="text-[11px] text-emerald-600 flex items-center gap-1 mt-0.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-          {shop?.is_active ? "Open" : "Closed"}
+        <p className={`text-[11px] flex items-center gap-1 mt-0.5 ${statusColor(shop)}`}>
+          <span className={`w-1.5 h-1.5 rounded-full inline-block ${statusDot(shop)}`} />
+          {statusLabel(shop)}
         </p>
       </div>
 

@@ -41,6 +41,63 @@ below for why. If you're pulling this after having a local checkout
 from before this phase, run `npm install` fresh rather than reusing an
 old `node_modules`.
 
+### Shop document storage setup (required for shop applications to work)
+
+Applying for a shop now requires uploading at least one verification
+document (business license, owner ID proof, etc.) — this closed a real
+gap a test run found, where a shop was fully operable the instant it
+was created, with nothing verified and nothing blocking it. Documents
+are uploaded straight from the browser to a **private** Supabase
+Storage bucket (`frontend/lib/documentUpload.ts`); the backend only
+ever stores the resulting URL, never the file itself.
+
+This bucket doesn't exist until you create it — run this once, in your
+Supabase project's SQL Editor (not a backend Alembic migration, since
+it's Supabase Storage's own schema, not this app's Postgres schema):
+
+```sql
+-- 1. Create the bucket (private — never set public = true here; these
+--    are ID proofs and business licenses).
+insert into storage.buckets (id, name, public)
+values ('shop-documents', 'shop-documents', false)
+on conflict (id) do nothing;
+
+-- 2. Let a signed-in user upload into (and read back) ONLY their own
+--    folder — enforced by requiring the file path to start with their
+--    own auth.uid().
+create policy "Users can upload their own shop documents"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'shop-documents'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "Users can read their own shop documents"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'shop-documents'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- 3. Let platform admins read EVERY shop document, not just their
+--    own — needed so an admin can actually open a document link from
+--    the Admin Panel's Manage Shops screen to review it.
+create policy "Admins can read all shop documents"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'shop-documents'
+  and exists (
+    select 1 from public.profiles
+    where profiles.id = auth.uid() and profiles.role = 'admin'
+  )
+);
+```
+
+Without this, `POST /shops` (applying for a shop) will still work at
+the API level, but the frontend's upload step will fail with a storage
+error before it ever gets that far — so run this before testing the
+"Apply to sell" flow.
+
 ## Try it — selling is NOT self-service
 
 1. As a plain customer, notice **"Sell" doesn't appear in the header at all.**
@@ -50,6 +107,7 @@ old `node_modules`.
    ```
 3. Log out and back in (or just refresh) — **"Admin" now appears in the header.** From here on, approving new sellers happens in the UI, not a script (see below).
 4. If a plain customer navigates straight to `/shop/dashboard` by URL anyway, they see a clear "Selling isn't available for your account yet" message — no dashboard UI flashes, no failed request happens, because the page checks the role it already knows *before* asking the backend anything. `/admin` behaves the same way for non-admins.
+5. Promote a second test account to `shop_owner` and open `/shop/dashboard` as them — instead of an instant "create your shop" form, it's now an **application**: name, category, and at least one verification document (see "Shop document storage setup" above — you'll need that SQL run first). Submit it and the shop shows a "Pending Approval" status screen, not a working dashboard — no products, orders, or anything else is reachable until an admin approves it (enforced on the backend too, not just hidden in the UI). Approve it from `/admin` and refresh — the full dashboard appears.
 
 ## Try the Admin Panel (once you have an admin account)
 

@@ -1,3 +1,5 @@
+export type ShopDocument = { name: string; doc_type: string; url: string };
+
 export type Shop = {
   id: string;
   name: string;
@@ -5,6 +7,10 @@ export type Shop = {
   rating: number;
   is_active: boolean;
   created_at: string;
+  approval_status: "pending" | "approved" | "rejected";
+  docs_status: "pending" | "submitted" | "verified";
+  documents: ShopDocument[];
+  rejection_reason: string | null;
 };
 
 export type Product = {

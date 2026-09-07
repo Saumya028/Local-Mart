@@ -120,6 +120,13 @@ async def get_current_user(
         await db.commit()
         await db.refresh(profile)
 
+    # A suspended account (Admin Panel > Manage Users > Suspend) is locked
+    # out here, on the very next request — not just hidden from the UI.
+    # This is the actual enforcement; the frontend's "Suspend" button is
+    # just how an admin flips this flag.
+    if profile.is_suspended:
+        raise HTTPException(status_code=403, detail="This account has been suspended")
+
     return profile
 
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -9,14 +10,23 @@ from app.core.db import get_db
 from app.core.order_status import RECOGNIZED_STATUSES as RECOGNIZED_ORDER_STATUSES
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import AuditLog, Order, Product, Profile, Shop
+from app.models import Address, AuditLog, Order, PlatformSettings, Product, Profile, Shop
 from app.schemas.admin import (
     AdminShopOut,
     AdminUserOut,
     AuditLogOut,
+    CategoryShare,
+    DashboardSummary,
+    MonthPoint,
     PlatformMetrics,
+    PlatformSettingsOut,
+    PlatformSettingsUpdate,
+    RejectShopRequest,
     RoleUpdate,
     ShopStatusUpdate,
+    UsersSummary,
+    UserStatusUpdate,
+    VALID_APPROVAL_STATUSES,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -60,6 +70,26 @@ def _record_audit(
     )
 
 
+def _month_bounds(months_back: int) -> tuple[datetime, datetime]:
+    """Returns (start, end) UTC bounds for "N months ago" as a calendar month."""
+    now = datetime.now(timezone.utc)
+    first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Walk back `months_back` calendar months from the first of this month.
+    year = first_of_this_month.year
+    month = first_of_this_month.month - months_back
+    while month <= 0:
+        month += 12
+        year -= 1
+    start = first_of_this_month.replace(year=year, month=month)
+    end_month = start.month + 1
+    end_year = start.year
+    if end_month > 12:
+        end_month = 1
+        end_year += 1
+    end = start.replace(year=end_year, month=end_month)
+    return start, end
+
+
 @router.get("/users", response_model=list[AdminUserOut])
 async def list_users(
     role: str | None = Query(default=None),
@@ -68,7 +98,15 @@ async def list_users(
     admin: Profile = Depends(RequireAdmin),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Profile)
+    order_counts = (
+        select(Order.user_id, func.count().label("orders_count"))
+        .group_by(Order.user_id)
+        .subquery()
+    )
+
+    stmt = select(Profile, func.coalesce(order_counts.c.orders_count, 0)).outerjoin(
+        order_counts, order_counts.c.user_id == Profile.id
+    )
     if role is not None:
         stmt = stmt.where(Profile.role == role)
     if q:
@@ -76,7 +114,18 @@ async def list_users(
     stmt = stmt.order_by(Profile.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "created_at": user.created_at,
+            "is_suspended": user.is_suspended,
+            "orders_count": orders_count,
+        }
+        for user, orders_count in result.all()
+    ]
 
 
 @router.patch("/users/{user_id}/role", response_model=AdminUserOut)
@@ -130,12 +179,92 @@ async def update_user_role(
 
     await db.commit()
     await db.refresh(user)
-    return user
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "created_at": user.created_at,
+        "is_suspended": user.is_suspended,
+        "orders_count": 0,
+    }
+
+
+@router.patch("/users/{user_id}/status", response_model=AdminUserOut)
+async def update_user_status(
+    user_id: str,
+    payload: UserStatusUpdate,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    The "Suspend" / "Reactivate" action on Manage Users. Enforced for
+    real in security.py's get_current_user — a suspended account is
+    locked out of every endpoint on its very next request, not just
+    hidden from this UI.
+    """
+    uid = parse_uuid_or_404(user_id, "User")
+
+    if uid == admin.id and payload.is_suspended:
+        raise HTTPException(status_code=400, detail="You can't suspend your own account.")
+
+    result = await db.execute(select(Profile).where(Profile.id == uid))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_suspended = payload.is_suspended
+
+    _record_audit(
+        db,
+        admin,
+        action="user_suspended" if payload.is_suspended else "user_reactivated",
+        target_type="profile",
+        target_id=user.id,
+        details={"email": user.email},
+    )
+
+    await db.commit()
+    await db.refresh(user)
+
+    orders_count = await db.scalar(select(func.count()).select_from(Order).where(Order.user_id == uid))
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "created_at": user.created_at,
+        "is_suspended": user.is_suspended,
+        "orders_count": orders_count or 0,
+    }
+
+
+@router.get("/users-summary", response_model=UsersSummary)
+async def users_summary(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """The three top cards on Manage Users: Total Customers / Shop Owners / Delivery Partners."""
+    total_customers = await db.scalar(
+        select(func.count()).select_from(Profile).where(Profile.role == "customer")
+    )
+    shop_owners = await db.scalar(
+        select(func.count()).select_from(Profile).where(Profile.role == "shop_owner")
+    )
+    delivery_partners = await db.scalar(
+        select(func.count()).select_from(Profile).where(Profile.role == "delivery_partner")
+    )
+    return {
+        "total_customers": total_customers,
+        "shop_owners": shop_owners,
+        "delivery_partners": delivery_partners,
+    }
 
 
 @router.get("/shops", response_model=list[AdminShopOut])
 async def list_all_shops(
     is_active: bool | None = Query(default=None),
+    approval_status: str | None = Query(default=None),
     q: str | None = Query(default=None, description="Case-insensitive substring match on shop name"),
     limit: int = Query(default=200, le=500),
     admin: Profile = Depends(RequireAdmin),
@@ -143,14 +272,27 @@ async def list_all_shops(
 ):
     """
     Unlike GET /shops (the public catalog), this deliberately does NOT
-    filter to `is_active=True` by default and is NOT cached — an admin
-    needs to see deactivated shops too (to reactivate them), and this
-    endpoint is low-traffic enough that Redis would add complexity with
-    no real benefit.
+    filter to `is_active=True`/`approval_status="approved"` by default —
+    an admin needs to see pending, rejected, and deactivated shops too
+    (that's the whole point of the Manage Shops > Pending Approval tab),
+    and this endpoint is low-traffic enough that Redis would add
+    complexity with no real benefit.
     """
-    stmt = select(Shop, Profile.email).join(Profile, Profile.id == Shop.owner_id)
+    if approval_status is not None and approval_status not in VALID_APPROVAL_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f'"{approval_status}" isn\'t a recognized status. Valid: {", ".join(VALID_APPROVAL_STATUSES)}',
+        )
+
+    stmt = (
+        select(Shop, Profile.email, Profile.full_name, Address.city)
+        .join(Profile, Profile.id == Shop.owner_id)
+        .outerjoin(Address, Address.id == Shop.address_id)
+    )
     if is_active is not None:
         stmt = stmt.where(Shop.is_active == is_active)
+    if approval_status is not None:
+        stmt = stmt.where(Shop.approval_status == approval_status)
     if q:
         stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
     stmt = stmt.order_by(Shop.created_at.desc()).limit(limit)
@@ -163,12 +305,51 @@ async def list_all_shops(
             "category": shop.category,
             "rating": shop.rating,
             "is_active": shop.is_active,
+            "approval_status": shop.approval_status,
+            "docs_status": shop.docs_status,
+            "documents": shop.documents,
+            "rejection_reason": shop.rejection_reason,
             "created_at": shop.created_at,
             "owner_id": shop.owner_id,
             "owner_email": owner_email,
+            "owner_name": owner_name,
+            "location": city,
         }
-        for shop, owner_email in result.all()
+        for shop, owner_email, owner_name, city in result.all()
     ]
+
+
+async def _shop_or_404(db: AsyncSession, shop_id: str) -> Shop:
+    sid = parse_uuid_or_404(shop_id, "Shop")
+    result = await db.execute(select(Shop).where(Shop.id == sid))
+    shop = result.scalar_one_or_none()
+    if shop is None:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    return shop
+
+
+async def _shop_out(db: AsyncSession, shop: Shop) -> dict:
+    owner_result = await db.execute(select(Profile.email, Profile.full_name).where(Profile.id == shop.owner_id))
+    owner_email, owner_name = owner_result.one()
+    city = None
+    if shop.address_id is not None:
+        city = await db.scalar(select(Address.city).where(Address.id == shop.address_id))
+    return {
+        "id": shop.id,
+        "name": shop.name,
+        "category": shop.category,
+        "rating": shop.rating,
+        "is_active": shop.is_active,
+        "approval_status": shop.approval_status,
+        "docs_status": shop.docs_status,
+        "documents": shop.documents,
+        "rejection_reason": shop.rejection_reason,
+        "created_at": shop.created_at,
+        "owner_id": shop.owner_id,
+        "owner_email": owner_email,
+        "owner_name": owner_name,
+        "location": city,
+    }
 
 
 @router.patch("/shops/{shop_id}/status", response_model=AdminShopOut)
@@ -186,11 +367,7 @@ async def update_shop_status(
     shop on the platform, e.g. in response to a complaint or a policy
     violation, independent of who owns it.
     """
-    sid = parse_uuid_or_404(shop_id, "Shop")
-    result = await db.execute(select(Shop).where(Shop.id == sid))
-    shop = result.scalar_one_or_none()
-    if shop is None:
-        raise HTTPException(status_code=404, detail="Shop not found")
+    shop = await _shop_or_404(db, shop_id)
 
     old_status = shop.is_active
     shop.is_active = payload.is_active
@@ -212,19 +389,111 @@ async def update_shop_status(
     # because Redis hasn't naturally expired the old cached value yet.
     await invalidate("shops:list", f"shop:{shop_id}", "categories:list")
 
-    owner_result = await db.execute(select(Profile.email).where(Profile.id == shop.owner_id))
-    owner_email = owner_result.scalar_one()
+    return await _shop_out(db, shop)
 
-    return {
-        "id": shop.id,
-        "name": shop.name,
-        "category": shop.category,
-        "rating": shop.rating,
-        "is_active": shop.is_active,
-        "created_at": shop.created_at,
-        "owner_id": shop.owner_id,
-        "owner_email": owner_email,
-    }
+
+@router.patch("/shops/{shop_id}/approve", response_model=AdminShopOut)
+async def approve_shop(
+    shop_id: str,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    "Approve Shop" in the Pending Approval queue. Flips BOTH
+    approval_status -> "approved" and is_active -> True in one step
+    (the mockup has no separate "approved but closed" state for a brand
+    new application) — the shop goes live on the storefront the moment
+    this returns. Also marks docs_status "verified" and clears any old
+    rejection_reason — approving a shop IS the admin confirming its
+    documents are in order.
+    """
+    shop = await _shop_or_404(db, shop_id)
+
+    _record_audit(
+        db,
+        admin,
+        action="shop_approved",
+        target_type="shop",
+        target_id=shop.id,
+        details={"shop_name": shop.name},
+    )
+
+    shop.approval_status = "approved"
+    shop.docs_status = "verified"
+    shop.rejection_reason = None
+    shop.is_active = True
+    await db.commit()
+    await db.refresh(shop)
+    await invalidate("shops:list", f"shop:{shop_id}", "categories:list")
+    return await _shop_out(db, shop)
+
+
+@router.patch("/shops/{shop_id}/reject", response_model=AdminShopOut)
+async def reject_shop(
+    shop_id: str,
+    payload: RejectShopRequest | None = None,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    "Reject" in the Pending Approval queue — the shop stays in the
+    database (so its owner can see why and fix it) but never goes live.
+    The optional `reason` is what the owner sees on their Shop
+    Dashboard's rejection screen — it's cleared automatically the moment
+    they resubmit documents (see shop_dashboard.py's update_my_shop).
+    """
+    shop = await _shop_or_404(db, shop_id)
+
+    reason = payload.reason if payload else None
+    _record_audit(
+        db,
+        admin,
+        action="shop_rejected",
+        target_type="shop",
+        target_id=shop.id,
+        details={"shop_name": shop.name, "reason": reason},
+    )
+
+    shop.approval_status = "rejected"
+    shop.is_active = False
+    shop.rejection_reason = reason
+    await db.commit()
+    await db.refresh(shop)
+    await invalidate("shops:list", f"shop:{shop_id}", "categories:list")
+    return await _shop_out(db, shop)
+
+
+@router.patch("/shops/{shop_id}/request-docs", response_model=AdminShopOut)
+async def request_shop_docs(
+    shop_id: str,
+    payload: RejectShopRequest | None = None,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    "Request Docs" in the Pending Approval queue — marks documents as
+    needing (re)review, without touching the approval decision itself.
+    Reuses RejectShopRequest's `reason` field to tell the owner what's
+    missing/wrong (e.g. "GST certificate photo is unreadable") — shown on
+    their Shop Dashboard the same way a rejection reason is.
+    """
+    shop = await _shop_or_404(db, shop_id)
+
+    reason = payload.reason if payload else None
+    _record_audit(
+        db,
+        admin,
+        action="shop_docs_requested",
+        target_type="shop",
+        target_id=shop.id,
+        details={"shop_name": shop.name, "reason": reason},
+    )
+
+    shop.docs_status = "pending"
+    shop.rejection_reason = reason
+    await db.commit()
+    await db.refresh(shop)
+    return await _shop_out(db, shop)
 
 
 @router.get("/metrics", response_model=PlatformMetrics)
@@ -286,6 +555,216 @@ async def platform_metrics(
         "confirmed_orders": confirmed_orders,
         "gmv": gmv,
     }
+
+
+@router.get("/dashboard-summary", response_model=DashboardSummary)
+async def dashboard_summary(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """The four top cards on the Admin Panel's Dashboard tab, each with a period-over-period delta."""
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    this_month_start, next_month_start = _month_bounds(0)
+    last_month_start, _ = _month_bounds(1)
+
+    total_shops = await db.scalar(select(func.count()).select_from(Shop))
+    shops_added_this_month = await db.scalar(
+        select(func.count()).select_from(Shop).where(Shop.created_at >= this_month_start)
+    )
+
+    total_users = await db.scalar(select(func.count()).select_from(Profile))
+    users_added_this_week = await db.scalar(
+        select(func.count()).select_from(Profile).where(Profile.created_at >= week_ago)
+    )
+
+    orders_this_month = await db.scalar(
+        select(func.count())
+        .select_from(Order)
+        .where(Order.status.in_(RECOGNIZED_ORDER_STATUSES), Order.created_at >= this_month_start)
+    )
+    orders_last_month = await db.scalar(
+        select(func.count())
+        .select_from(Order)
+        .where(
+            Order.status.in_(RECOGNIZED_ORDER_STATUSES),
+            Order.created_at >= last_month_start,
+            Order.created_at < this_month_start,
+        )
+    )
+
+    revenue_this_month = await db.scalar(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.status.in_(RECOGNIZED_ORDER_STATUSES), Order.created_at >= this_month_start
+        )
+    )
+    revenue_last_month = await db.scalar(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.status.in_(RECOGNIZED_ORDER_STATUSES),
+            Order.created_at >= last_month_start,
+            Order.created_at < this_month_start,
+        )
+    )
+
+    def pct_change(current, previous) -> float | None:
+        if not previous:
+            return None
+        return round((float(current) - float(previous)) / float(previous) * 100, 1)
+
+    return {
+        "total_shops": total_shops,
+        "shops_added_this_month": shops_added_this_month,
+        "total_users": total_users,
+        "users_added_this_week": users_added_this_week,
+        "monthly_orders": orders_this_month,
+        "monthly_orders_change_pct": pct_change(orders_this_month, orders_last_month),
+        "platform_revenue": revenue_this_month,
+        "platform_revenue_change_pct": pct_change(revenue_this_month, revenue_last_month),
+    }
+
+
+@router.get("/revenue-trend", response_model=list[MonthPoint])
+async def revenue_trend(
+    months: int = Query(default=7, ge=1, le=24),
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Platform Revenue line chart on the Dashboard tab: confirmed-order revenue per calendar month."""
+    month_col = func.date_trunc("month", Order.created_at)
+    stmt = (
+        select(month_col.label("month"), func.coalesce(func.sum(Order.total_amount), 0))
+        .where(
+            Order.status.in_(RECOGNIZED_ORDER_STATUSES),
+            Order.created_at >= _month_bounds(months - 1)[0],
+        )
+        .group_by(month_col)
+        .order_by(month_col)
+    )
+    result = await db.execute(stmt)
+    by_month = {row[0]: row[1] for row in result.all()}
+
+    points = []
+    for i in range(months - 1, -1, -1):
+        start, _ = _month_bounds(i)
+        points.append(MonthPoint(label=start.strftime("%b"), value=by_month.get(start, 0) or 0))
+    return points
+
+
+@router.get("/shop-growth", response_model=list[MonthPoint])
+async def shop_growth(
+    months: int = Query(default=7, ge=1, le=24),
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Monthly Shop Growth bar chart on the Reports tab: new shops created per calendar month."""
+    month_col = func.date_trunc("month", Shop.created_at)
+    stmt = (
+        select(month_col.label("month"), func.count())
+        .where(Shop.created_at >= _month_bounds(months - 1)[0])
+        .group_by(month_col)
+        .order_by(month_col)
+    )
+    result = await db.execute(stmt)
+    by_month = {row[0]: row[1] for row in result.all()}
+
+    points = []
+    for i in range(months - 1, -1, -1):
+        start, _ = _month_bounds(i)
+        points.append(MonthPoint(label=start.strftime("%b"), value=by_month.get(start, 0) or 0))
+    return points
+
+
+@router.get("/category-breakdown", response_model=list[CategoryShare])
+async def category_breakdown(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Powers BOTH the Dashboard's "Orders by Category" donut and the
+    Reports tab's "Revenue by Category" pie — the mockup shows the same
+    percentage breakdown in both places, so one endpoint (revenue share
+    per shop category, across confirmed orders) backs both charts rather
+    than computing two subtly different breakdowns that could drift.
+    """
+    stmt = (
+        select(Shop.category, func.coalesce(func.sum(Order.total_amount), 0))
+        .join(Shop, Shop.id == Order.shop_id)
+        .where(Order.status.in_(RECOGNIZED_ORDER_STATUSES))
+        .group_by(Shop.category)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    total = sum(float(amount) for _, amount in rows)
+    if total <= 0:
+        return []
+    shares = sorted(
+        ({"category": category, "pct": round(float(amount) / total * 100, 1)} for category, amount in rows),
+        key=lambda r: r["pct"],
+        reverse=True,
+    )
+    return shares
+
+
+@router.get("/settings", response_model=PlatformSettingsOut)
+async def get_settings(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    settings_row = await db.get(PlatformSettings, 1)
+    if settings_row is None:
+        # Defensive fallback in case the seed row from the migration is
+        # somehow missing — creates it on first read rather than 500ing.
+        settings_row = PlatformSettings(
+            id=1,
+            payment_gateways=[
+                {"key": "razorpay", "name": "Razorpay", "enabled": True, "primary": True},
+                {"key": "upi_direct", "name": "UPI Direct", "enabled": True, "primary": False},
+                {"key": "cod", "name": "Cash on Delivery", "enabled": True, "primary": False},
+            ],
+        )
+        db.add(settings_row)
+        await db.commit()
+        await db.refresh(settings_row)
+    return settings_row
+
+
+@router.put("/settings", response_model=PlatformSettingsOut)
+async def update_settings(
+    payload: PlatformSettingsUpdate,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Backs every "Edit" button on Settings > Platform Settings, plus the
+    Payment Gateway toggles — each save sends only the field(s) that
+    changed (see PlatformSettingsUpdate's docstring), so this applies
+    whichever subset of fields is present rather than requiring the
+    whole object every time.
+    """
+    settings_row = await db.get(PlatformSettings, 1)
+    if settings_row is None:
+        raise HTTPException(status_code=404, detail="Platform settings not initialized")
+
+    updates = payload.model_dump(exclude_unset=True)
+    gateways_changed = "payment_gateways" in updates
+    for field, value in updates.items():
+        if field == "payment_gateways":
+            setattr(settings_row, field, [g.model_dump() if hasattr(g, "model_dump") else g for g in value])
+        else:
+            setattr(settings_row, field, value)
+
+    _record_audit(
+        db,
+        admin,
+        action="platform_settings_updated",
+        target_type="platform_settings",
+        target_id=None,
+        details={"fields": list(updates.keys())},
+    )
+
+    await db.commit()
+    await db.refresh(settings_row)
+    return settings_row
 
 
 @router.get("/audit-log", response_model=list[AuditLogOut])

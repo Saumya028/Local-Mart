@@ -22,7 +22,7 @@ app/
     health.py, auth.py, categories.py, products.py
     cart.py, addresses.py, webhooks.py
     shops.py, orders.py, shop_dashboard.py, admin.py
-migrations/                 # Alembic (0001-0004 - 0004 is new this phase: hardening indexes)
+migrations/                 # Alembic (0001-0006 — 0005 added the Admin Panel's shop-approval/user-suspend/settings tables, 0006 added shop verification documents + rejection reason)
 scripts/
   seed.py, promote_user.py
   backup_restore_check.sh (new)   # backup/restore verification runbook

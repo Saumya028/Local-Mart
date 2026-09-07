@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,3 +39,10 @@ class Profile(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Admin Panel "Suspend" action (Manage Users). Distinct from `role`:
+    # suspending someone doesn't change what they ARE (customer/shop_owner),
+    # only whether they can currently use the account. Enforced in
+    # security.py's get_current_user so a suspended account is locked out
+    # on the very next request, not just hidden from the UI.
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

@@ -27,11 +27,16 @@ async def list_shops(
     varied, so it goes straight to Postgres; caching every possible filter
     value isn't worth the complexity at this stage.
     """
+    # A shop must be BOTH is_active (currently open) AND approval_status
+    # == "approved" (an admin has signed off on it) to show up in the
+    # public catalog — a brand-new, still-pending application is invisible
+    # here even though its is_active default is fine, exactly like a
+    # rejected/deactivated shop is.
     if category is None:
         async def load():
             result = await db.execute(
                 select(Shop)
-                .where(Shop.is_active.is_(True))
+                .where(Shop.is_active.is_(True), Shop.approval_status == "approved")
                 .order_by(Shop.rating.desc())
                 .limit(50)
             )
@@ -42,7 +47,11 @@ async def list_shops(
 
     result = await db.execute(
         select(Shop)
-        .where(Shop.is_active.is_(True), Shop.category == category)
+        .where(
+            Shop.is_active.is_(True),
+            Shop.approval_status == "approved",
+            Shop.category == category,
+        )
         .order_by(Shop.rating.desc())
         .limit(50)
     )
@@ -67,7 +76,22 @@ async def create_shop(
     customer hitting this endpoint gets a clean 403 from require_role
     before ever reaching this function body.
     """
-    shop = Shop(id=uuid.uuid4(), owner_id=user.id, name=payload.name, category=payload.category)
+    # New shops start "pending"/unverified and closed — they only become
+    # visible on the storefront once an admin approves them from the
+    # Manage Shops queue (see routers/admin.py's approve_shop). docs_status
+    # is "submitted" (not the model's Python-side "pending" default)
+    # because ShopCreate.documents already required at least one file —
+    # there's something on file for an admin to review from the start.
+    shop = Shop(
+        id=uuid.uuid4(),
+        owner_id=user.id,
+        name=payload.name,
+        category=payload.category,
+        is_active=False,
+        approval_status="pending",
+        docs_status="submitted",
+        documents=[d.model_dump() for d in payload.documents],
+    )
     db.add(shop)
     await db.commit()
     await db.refresh(shop)

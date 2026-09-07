@@ -17,7 +17,7 @@ from that validation, both real and both fixed:
   deliberately narrow) test suite, lint on both apps, and a GitHub
   Actions workflow that runs all of it on every push. See each folder's
   README for exactly what's covered and what honestly still isn't.
-- **A dependency vulnerability scan found real CVEs, not hypothetical
+- **A 0dependency vulnerability scan found real CVEs, not hypothetical
   ones** — including a critical-severity one in the version of Next.js
   this project was built on. Both apps' dependencies were audited,
   patched where a safe patch existed, and the one exception (a

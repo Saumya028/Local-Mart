@@ -10,7 +10,10 @@ import { OrdersTab } from "@/components/shop-dashboard/OrdersTab";
 import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
+import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
+import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
+import { UploadedDocument } from "@/lib/documentUpload";
 
 const TAB_TITLES: Record<TabKey, string> = {
   dashboard: "Dashboard",
@@ -62,6 +65,8 @@ export default function ShopDashboardPage() {
   // elsewhere in the UI without a full page reload.
   useEffect(() => {
     if (!selectedShopId) return;
+    const shop = shops.find((s) => s.id === selectedShopId);
+    if (shop?.approval_status !== "approved") return;
     let cancelled = false;
     apiFetch(`/dashboard/orders?shop_id=${selectedShopId}`)
       .then((orders: { status: string }[]) => {
@@ -71,7 +76,7 @@ export default function ShopDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedShopId, tab]);
+  }, [selectedShopId, tab, shops]);
 
   if (authLoading || (canSell && loadingShops)) {
     return (
@@ -110,17 +115,41 @@ export default function ShopDashboardPage() {
   }
 
   // Reaching here means the account IS shop_owner/admin, but owns zero
-  // shops yet (e.g. just promoted) — this is the "create your first
+  // shops yet (e.g. just promoted) — this is the "apply for your first
   // shop" screen, not a "become a seller" screen.
   if (shops.length === 0) {
     return (
-      <main className="max-w-md mx-auto px-6 py-10">
-        <CreateShopForm onCreated={loadShops} loadError={error} />
+      <main className="max-w-lg mx-auto px-6 py-10">
+        <ApplyForm userId={profile!.id} onCreated={loadShops} loadError={error} />
       </main>
     );
   }
 
   const selectedShop = shops.find((s) => s.id === selectedShopId) ?? null;
+
+  // A shop that isn't approved yet gets NO dashboard functionality at
+  // all, regardless of which nav tab is selected — see the backend's own
+  // enforcement of this exact rule in shop_dashboard.py's
+  // _require_approved_shop. This is the fix for the real gap a test run
+  // found: previously this page rendered the full dashboard (add
+  // products, etc.) for a shop that was still pending admin review.
+  if (selectedShop && selectedShop.approval_status !== "approved") {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar
+          shop={selectedShop}
+          shops={shops}
+          onSelectShop={setSelectedShopId}
+          tab={tab}
+          onSelectTab={setTab}
+          pendingCount={0}
+        />
+        <div className="flex-1 overflow-y-auto">
+          <ShopStatusScreen shop={selectedShop} userId={profile!.id} onUpdated={loadShops} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -148,24 +177,31 @@ export default function ShopDashboardPage() {
   );
 }
 
-function CreateShopForm({
+function ApplyForm({
+  userId,
   onCreated,
   loadError,
 }: {
+  userId: string;
   onCreated: () => void;
   loadError: string | null;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (documents.length === 0) {
+      setError("Add at least one verification document before applying.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await apiFetch("/shops", { method: "POST", body: JSON.stringify({ name, category }) });
+      await apiFetch("/shops", { method: "POST", body: JSON.stringify({ name, category, documents }) });
       onCreated();
     } catch (err) {
       setError((err as Error).message);
@@ -175,33 +211,46 @@ function CreateShopForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <h1 className="text-2xl font-bold">Create your shop</h1>
-      <p className="text-sm text-gray-500">
-        Your account is approved to sell — set up your first shop to get a
-        dashboard for managing products and orders.
-      </p>
-      <input
-        placeholder="Shop name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        required
-        className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      <input
-        placeholder="Category (e.g. Groceries)"
-        value={category}
-        onChange={(e) => setCategory(e.target.value)}
-        required
-        className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold">Apply to sell on LocalMart</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Tell us about your shop and attach at least one verification document
+          (e.g. a GST/business license or the owner&apos;s ID proof). An admin
+          reviews every application before it goes live — you&apos;ll be able to
+          manage products and orders here as soon as it&apos;s approved.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <input
+          placeholder="Shop name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          placeholder="Category (e.g. Groceries)"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div className="border-t border-gray-100 pt-4">
+        <p className="text-sm font-medium text-gray-900 mb-2">Verification documents</p>
+        <DocumentUploader userId={userId} documents={documents} onChange={setDocuments} />
+      </div>
+
       {(error || loadError) && <p className="text-sm text-red-500">{error || loadError}</p>}
       <button
         type="submit"
         disabled={saving}
         className="w-full bg-blue-600 text-white rounded-md py-2 text-sm font-medium disabled:opacity-50"
       >
-        {saving ? "Creating…" : "Create shop"}
+        {saving ? "Submitting…" : "Submit application"}
       </button>
     </form>
   );

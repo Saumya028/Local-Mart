@@ -9,7 +9,19 @@ from pydantic import BaseModel, ConfigDict, field_validator
 # scripts/promote_user.py does it this way — it's the single place that
 # has to change if a role is ever added, and both the script and this
 # router import it so they can never drift apart.
-VALID_ROLES = ("customer", "shop_owner", "admin")
+# "delivery_partner" added for the Manage Users page's "Delivery
+# Partners" count — riders are just another profile role, not a
+# separate identity table, since nothing else in the product yet needs
+# more than "who is one".
+VALID_ROLES = ("customer", "shop_owner", "admin", "delivery_partner")
+
+# Every approval state a shop application can be in.
+VALID_APPROVAL_STATUSES = ("pending", "approved", "rejected")
+# Kept in sync by hand with app/schemas/shop.py's VALID_DOCS_STATUSES —
+# "submitted" (owner uploaded, awaiting review) sits between "pending"
+# (nothing on file / admin asked for more) and "verified" (admin signed
+# off).
+VALID_DOCS_STATUSES = ("pending", "submitted", "verified")
 
 
 class AdminUserOut(BaseModel):
@@ -20,6 +32,8 @@ class AdminUserOut(BaseModel):
     full_name: str | None
     role: str
     created_at: datetime
+    is_suspended: bool
+    orders_count: int = 0
 
 
 class RoleUpdate(BaseModel):
@@ -33,6 +47,10 @@ class RoleUpdate(BaseModel):
         return v
 
 
+class UserStatusUpdate(BaseModel):
+    is_suspended: bool
+
+
 class AdminShopOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,9 +59,19 @@ class AdminShopOut(BaseModel):
     category: str
     rating: float
     is_active: bool
+    approval_status: str
+    docs_status: str
+    documents: list[dict] = []
+    rejection_reason: str | None = None
     created_at: datetime
     owner_id: uuid.UUID
     owner_email: str
+    owner_name: str | None = None
+    location: str | None = None
+
+
+class RejectShopRequest(BaseModel):
+    reason: str | None = None
 
 
 class ShopStatusUpdate(BaseModel):
@@ -80,3 +108,72 @@ class PlatformMetrics(BaseModel):
     total_orders: int
     confirmed_orders: int
     gmv: Decimal
+
+
+class DashboardSummary(BaseModel):
+    """The four top cards on the Admin Panel's Dashboard tab."""
+
+    total_shops: int
+    shops_added_this_month: int
+    total_users: int
+    users_added_this_week: int
+    monthly_orders: int
+    monthly_orders_change_pct: float | None
+    platform_revenue: Decimal
+    platform_revenue_change_pct: float | None
+
+
+class UsersSummary(BaseModel):
+    """The three top cards on the Admin Panel's Manage Users tab."""
+
+    total_customers: int
+    shop_owners: int
+    delivery_partners: int
+
+
+class MonthPoint(BaseModel):
+    """One bar/line-chart point: a calendar month label + a value."""
+
+    label: str
+    value: Decimal
+
+
+class CategoryShare(BaseModel):
+    """One slice of the category donut/pie charts (orders or revenue %)."""
+
+    category: str
+    pct: float
+
+
+class PaymentGateway(BaseModel):
+    key: str
+    name: str
+    enabled: bool
+    primary: bool
+
+
+class PlatformSettingsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    commission_pct: Decimal
+    delivery_payout: Decimal
+    min_order_amount: Decimal
+    max_delivery_radius_km: Decimal
+    payment_gateways: list[PaymentGateway]
+    updated_at: datetime
+
+
+class PlatformSettingsUpdate(BaseModel):
+    """
+    Every field optional — the Settings page edits one card/one gateway
+    toggle at a time (matching the mockup's per-row "Edit" buttons), never
+    the whole settings object at once, so a partial PATCH-style update
+    (sent via PUT for simplicity) shouldn't require resending fields the
+    admin didn't touch.
+    """
+
+    commission_pct: Decimal | None = None
+    delivery_payout: Decimal | None = None
+    min_order_amount: Decimal | None = None
+    max_delivery_radius_km: Decimal | None = None
+    payment_gateways: list[PaymentGateway] | None = None

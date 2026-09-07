@@ -21,7 +21,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
-from app.schemas.shop import ShopOut, ShopUpdate
+from app.schemas.shop import DashboardShopOut, ShopUpdate
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -84,7 +84,27 @@ async def _get_owned_shop_or_403(shop_id: uuid.UUID, user: Profile, db: AsyncSes
     return shop
 
 
-@router.get("/shops", response_model=list[ShopOut])
+def _require_approved_shop(shop: Shop) -> None:
+    """
+    THE fix for the real gap a test run surfaced: previously nothing
+    stopped a shop owner from fully operating a shop (adding products,
+    the works) the instant POST /shops returned — regardless of
+    approval_status, which is meaningless if nothing actually checks it.
+    Every mutating, shop-scoped action below calls this right after
+    `_user_owns_shop` passes. Deliberately NOT applied to `my_shops` or
+    `update_my_shop` — an owner still needs to see their pending/rejected
+    shop's status and resubmit documents on it (see ShopUpdate.documents),
+    which would be impossible if this blocked that endpoint too.
+    """
+    if shop.approval_status != "approved":
+        detail = {
+            "pending": "This shop is still awaiting admin approval. You can manage it once it's approved.",
+            "rejected": "This shop's application was rejected. Update its documents and it will be reviewed again.",
+        }.get(shop.approval_status, "This shop isn't approved yet.")
+        raise HTTPException(status_code=403, detail=detail)
+
+
+@router.get("/shops", response_model=list[DashboardShopOut])
 async def my_shops(
     user: Profile = Depends(require_role("shop_owner", "admin")),
     db: AsyncSession = Depends(get_db),
@@ -99,18 +119,28 @@ async def my_shops(
     reaches the point of getting a 403 here in normal use — but the
     backend enforces it regardless, since the frontend check alone is
     never the real security boundary.
+
+    Returns DashboardShopOut (not the public ShopOut) — an owner
+    genuinely needs to see their own approval_status/docs_status/
+    rejection_reason to know what state their application is in.
     """
     result = await db.execute(select(Shop).where(Shop.owner_id == user.id))
     return result.scalars().all()
 
 
-@router.put("/shops/{shop_id}", response_model=ShopOut)
+@router.put("/shops/{shop_id}", response_model=DashboardShopOut)
 async def update_my_shop(
     shop_id: str,
     payload: ShopUpdate,
     user: Profile = Depends(require_role("shop_owner", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
+    """
+    Deliberately NOT gated by _require_approved_shop — this is exactly
+    how a pending or rejected shop's owner resubmits documents (see
+    ShopUpdate.documents) or fixes its name/category, which has to keep
+    working precisely WHILE the shop isn't approved yet.
+    """
     sid = parse_uuid_or_404(shop_id, "Shop")
     result = await db.execute(select(Shop).where(Shop.id == sid))
     shop = result.scalar_one_or_none()
@@ -118,7 +148,18 @@ async def update_my_shop(
     if not _user_owns_shop(shop, user):
         raise HTTPException(status_code=403, detail="You don't own this shop")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "documents" in updates:
+        # Resubmitting documents is itself the action that puts the
+        # application back in the admin's queue — flip docs_status back
+        # to "submitted" and clear whatever the previous rejection said,
+        # rather than making the owner wait on a second, separate call.
+        shop.docs_status = "submitted"
+        shop.rejection_reason = None
+        if shop.approval_status == "rejected":
+            shop.approval_status = "pending"
+
+    for key, value in updates.items():
         setattr(shop, key, value)
 
     await db.commit()
@@ -142,6 +183,7 @@ async def create_product(
     # a shop they don't own just by knowing (or guessing) its ID.
     if not _user_owns_shop(shop, user):
         raise HTTPException(status_code=403, detail="You don't own this shop")
+    _require_approved_shop(shop)
 
     product = Product(id=uuid.uuid4(), **payload.model_dump())
     db.add(product)
@@ -181,6 +223,7 @@ async def _get_owned_product_or_403(product_id: str, user: Profile, db: AsyncSes
     shop = shop_result.scalar_one_or_none()
     if not _user_owns_shop(shop, user):
         raise HTTPException(status_code=403, detail="You don't own this product")
+    _require_approved_shop(shop)
 
     return product
 
@@ -288,6 +331,7 @@ async def update_order_status(
     shop = shop_result.scalar_one_or_none()
     if not _user_owns_shop(shop, user):
         raise HTTPException(status_code=403, detail="You don't own this order")
+    _require_approved_shop(shop)
 
     allowed_next = ALLOWED_TRANSITIONS.get(order.status, set())
     if payload.status not in allowed_next:
