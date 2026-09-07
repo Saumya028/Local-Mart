@@ -1,10 +1,29 @@
-fastapi==0.115.0
+fastapi==0.141.1
+# Pinned directly, one line above fastapi's own resolution (0.48.0) —
+# closes 5 of 6 CVEs pip-audit flagged in this line during the Phase 7
+# scan. The remaining fixes ship only in starlette's new 1.x line,
+# which we deliberately do NOT adopt yet: testing it against this exact
+# fastapi version broke route introspection (Starlette's internal route
+# representation changed shape), and fastapi 0.141.1 itself hasn't
+# adopted 1.x as its resolved dependency — i.e. it isn't the
+# combination fastapi's own maintainers are testing against. Re-run
+# `pip-audit -r requirements.txt` (or let CI do it) periodically and
+# revisit once fastapi's own pin moves to starlette 1.x.
+starlette==0.49.1
 uvicorn[standard]==0.30.6
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
 redis==5.0.8
 pydantic-settings==2.5.2
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 alembic==1.13.2
-pyjwt[crypto]==2.9.0
+pyjwt[crypto]==2.13.0
 razorpay==2.0.1
+
+# Phase 7 — observability. Optional at runtime (core/observability.py is
+# a no-op without SENTRY_DSN set), but the package still needs to be
+# installed for that no-op check to even happen safely.
+sentry-sdk[fastapi]==2.14.0
+
+# Phase 7 — dependency vulnerability scanning in CI (.github/workflows/ci.yml)
+pip-audit==2.7.3

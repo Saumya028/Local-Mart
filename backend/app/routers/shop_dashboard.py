@@ -1,4 +1,6 @@
 import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -6,23 +8,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate
 from app.core.db import get_db
+from app.core.order_status import ALLOWED_TRANSITIONS, RECOGNIZED_STATUSES
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import Order, Product, Profile, Shop
+from app.models import Order, OrderItem, Product, Profile, Shop
+from app.schemas.dashboard import (
+    AnalyticsOut,
+    DashboardMetrics,
+    DayPoint,
+    RecentOrderPreview,
+    TopProductOut,
+)
 from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.schemas.shop import ShopOut, ShopUpdate
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# Forward-only status transitions a shop owner is allowed to make.
-# "pending" -> "confirmed"/"payment_failed" is deliberately absent here —
-# only Razorpay's webhook (routers/webhooks.py) gets to make that call,
-# since only Razorpay actually knows whether the payment succeeded.
-ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "confirmed": {"shipped", "cancelled"},
-    "shipped": {"delivered"},
-}
+# See app/core/order_status.py for the transition table and the
+# "recognized" (paid) statuses — both are shared with admin.py so
+# platform-wide metrics and this dashboard never drift apart on what
+# counts as a real sale. Note in particular: ALLOWED_TRANSITIONS has no
+# entry leading to "cancelled" anywhere — there is no reject/cancel
+# action a shop owner can take here, by design. The only forward path
+# is confirmed ("Pending" in the UI) -> preparing -> ready -> delivered.
+
+DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _today_start_utc() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _bucket_by_day(
+    rows: list[tuple[datetime, str, Decimal]], window_start: datetime, num_days: int
+) -> tuple[list[Decimal], list[int]]:
+    """Buckets (created_at, status, total_amount) rows into `num_days`
+    daily slots starting at `window_start`. Returns (revenue_per_day,
+    orders_per_day) — revenue only counts RECOGNIZED_STATUSES, order
+    counts include every status (a shop still wants to see failed/
+    abandoned attempts show up as "an order happened that day")."""
+    revenue = [Decimal("0")] * num_days
+    orders = [0] * num_days
+    for created_at, status, total_amount in rows:
+        offset = (created_at - window_start).days
+        if 0 <= offset < num_days:
+            orders[offset] += 1
+            if status in RECOGNIZED_STATUSES:
+                revenue[offset] += total_amount
+    return revenue, orders
 
 
 def _user_owns_shop(shop: Shop | None, user: Profile) -> bool:
@@ -39,6 +74,14 @@ def _user_owns_shop(shop: Shop | None, user: Profile) -> bool:
 async def _get_owned_shop_ids(user_id: uuid.UUID, db: AsyncSession) -> list[uuid.UUID]:
     result = await db.execute(select(Shop.id).where(Shop.owner_id == user_id))
     return [row[0] for row in result.all()]
+
+
+async def _get_owned_shop_or_403(shop_id: uuid.UUID, user: Profile, db: AsyncSession) -> Shop:
+    result = await db.execute(select(Shop).where(Shop.id == shop_id))
+    shop = result.scalar_one_or_none()
+    if not _user_owns_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't own this shop")
+    return shop
 
 
 @router.get("/shops", response_model=list[ShopOut])
@@ -195,7 +238,17 @@ async def incoming_orders(
 ):
     owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
 
-    stmt = select(Order, Profile.email).join(Profile, Profile.id == Order.user_id)
+    item_counts = (
+        select(OrderItem.order_id, func.sum(OrderItem.quantity).label("item_count"))
+        .group_by(OrderItem.order_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(Order, Profile.email, Profile.full_name, item_counts.c.item_count)
+        .join(Profile, Profile.id == Order.user_id)
+        .outerjoin(item_counts, item_counts.c.order_id == Order.id)
+    )
     if shop_id is not None:
         stmt = stmt.where(Order.shop_id == shop_id)
     if owned_shop_ids is not None:
@@ -211,8 +264,10 @@ async def incoming_orders(
             "delivery_address": order.delivery_address,
             "created_at": order.created_at,
             "buyer_email": buyer_email,
+            "buyer_name": buyer_name,
+            "item_count": int(item_count or 0),
         }
-        for order, buyer_email in result.all()
+        for order, buyer_email, buyer_name, item_count in result.all()
     ]
 
 
@@ -244,8 +299,17 @@ async def update_order_status(
     order.status = payload.status
     await db.commit()
 
-    buyer_result = await db.execute(select(Profile.email).where(Profile.id == order.user_id))
-    buyer_email = buyer_result.scalar_one()
+    buyer_result = await db.execute(
+        select(Profile.email, Profile.full_name).where(Profile.id == order.user_id)
+    )
+    buyer_email, buyer_name = buyer_result.one()
+
+    item_count_result = await db.execute(
+        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
+            OrderItem.order_id == order.id
+        )
+    )
+    item_count = item_count_result.scalar_one()
 
     return {
         "id": order.id,
@@ -255,6 +319,8 @@ async def update_order_status(
         "delivery_address": order.delivery_address,
         "created_at": order.created_at,
         "buyer_email": buyer_email,
+        "buyer_name": buyer_name,
+        "item_count": int(item_count),
     }
 
 
@@ -264,10 +330,12 @@ async def sales_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Confirmed-orders-only revenue per shop — a "pending" order hasn't
-    actually been paid for yet, and a "payment_failed" one never will be,
-    so neither should count toward sales. One GROUP BY query for however
-    many shops the user owns, rather than one query per shop.
+    Paid-orders-only revenue per shop — a "pending" order hasn't actually
+    been paid for yet, and a "payment_failed" one never will be, so
+    neither should count toward sales. "Paid" here means any status a
+    paid order can be in (confirmed/preparing/ready/delivered) — see
+    app/core/order_status.py. One GROUP BY query for however many shops
+    the user owns, rather than one query per shop.
     """
     owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
 
@@ -275,8 +343,10 @@ async def sales_summary(
         select(
             Shop.id,
             Shop.name,
-            func.count(Order.id).filter(Order.status == "confirmed"),
-            func.coalesce(func.sum(Order.total_amount).filter(Order.status == "confirmed"), 0),
+            func.count(Order.id).filter(Order.status.in_(RECOGNIZED_STATUSES)),
+            func.coalesce(
+                func.sum(Order.total_amount).filter(Order.status.in_(RECOGNIZED_STATUSES)), 0
+            ),
         )
         .select_from(Shop)
         .outerjoin(Order, Order.shop_id == Shop.id)
@@ -295,3 +365,202 @@ async def sales_summary(
         }
         for shop_id, shop_name, count, revenue in result.all()
     ]
+
+
+@router.get("/metrics", response_model=DashboardMetrics)
+async def dashboard_metrics(
+    shop_id: uuid.UUID = Query(...),
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Powers the Dashboard home tab: today's headline numbers, the
+    7-day revenue chart, top products, and a short recent-orders list —
+    all scoped to one shop the requesting user actually owns."""
+    shop = await _get_owned_shop_or_403(shop_id, user, db)
+
+    today_start = _today_start_utc()
+    yesterday_start = today_start - timedelta(days=1)
+    week_start = today_start - timedelta(days=6)  # 7 days total, including today
+    prev_week_start = week_start - timedelta(days=7)
+
+    week_rows_result = await db.execute(
+        select(Order.created_at, Order.status, Order.total_amount).where(
+            Order.shop_id == shop_id, Order.created_at >= week_start
+        )
+    )
+    week_rows = week_rows_result.all()
+    revenue_by_day, _orders_by_day = _bucket_by_day(week_rows, week_start, 7)
+
+    today_revenue = revenue_by_day[6]
+    yesterday_revenue = revenue_by_day[5]
+    today_orders = sum(
+        1
+        for created_at, status, _ in week_rows
+        if created_at >= today_start and status in RECOGNIZED_STATUSES
+    )
+    yesterday_orders = sum(
+        1
+        for created_at, status, _ in week_rows
+        if yesterday_start <= created_at < today_start and status in RECOGNIZED_STATUSES
+    )
+
+    prev_week_result = await db.execute(
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.shop_id == shop_id,
+            Order.created_at >= prev_week_start,
+            Order.created_at < week_start,
+            Order.status.in_(RECOGNIZED_STATUSES),
+        )
+    )
+    prev_week_revenue = prev_week_result.scalar_one()
+    week_revenue_total = sum(revenue_by_day, Decimal("0"))
+    week_change_pct = (
+        float((week_revenue_total - prev_week_revenue) / prev_week_revenue * 100)
+        if prev_week_revenue
+        else None
+    )
+
+    pending_result = await db.execute(
+        select(func.count()).where(Order.shop_id == shop_id, Order.status == "confirmed")
+    )
+    pending_orders = pending_result.scalar_one()
+
+    urgent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    urgent_result = await db.execute(
+        select(func.count()).where(
+            Order.shop_id == shop_id,
+            Order.status == "confirmed",
+            Order.created_at < urgent_cutoff,
+        )
+    )
+    urgent_pending_orders = urgent_result.scalar_one()
+
+    top_products_result = await db.execute(
+        select(
+            Product.id,
+            Product.name,
+            func.sum(OrderItem.quantity),
+            func.sum(OrderItem.quantity * OrderItem.unit_price),
+        )
+        .join(OrderItem, OrderItem.product_id == Product.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(Order.shop_id == shop_id, Order.status.in_(RECOGNIZED_STATUSES))
+        .group_by(Product.id, Product.name)
+        .order_by(func.sum(OrderItem.quantity * OrderItem.unit_price).desc())
+        .limit(4)
+    )
+    top_products = [
+        TopProductOut(id=str(pid), name=name, units_sold=int(units), revenue=revenue)
+        for pid, name, units, revenue in top_products_result.all()
+    ]
+
+    item_counts = (
+        select(OrderItem.order_id, func.sum(OrderItem.quantity).label("item_count"))
+        .group_by(OrderItem.order_id)
+        .subquery()
+    )
+    recent_result = await db.execute(
+        select(Order, Profile.email, Profile.full_name, item_counts.c.item_count)
+        .join(Profile, Profile.id == Order.user_id)
+        .outerjoin(item_counts, item_counts.c.order_id == Order.id)
+        .where(Order.shop_id == shop_id)
+        .order_by(Order.created_at.desc())
+        .limit(4)
+    )
+    recent_orders = [
+        RecentOrderPreview(
+            id=str(order.id),
+            buyer_name=buyer_name,
+            buyer_email=buyer_email,
+            item_count=int(item_count or 0),
+            total_amount=order.total_amount,
+            status=order.status,
+            created_at=order.created_at.isoformat(),
+        )
+        for order, buyer_email, buyer_name, item_count in recent_result.all()
+    ]
+
+    revenue_points = [
+        DayPoint(
+            label=DAY_LABELS[(week_start + timedelta(days=i)).weekday()],
+            date=(week_start + timedelta(days=i)).date().isoformat(),
+            value=revenue_by_day[i],
+        )
+        for i in range(7)
+    ]
+
+    return DashboardMetrics(
+        today_revenue=today_revenue,
+        today_orders=today_orders,
+        yesterday_revenue=yesterday_revenue,
+        yesterday_orders=yesterday_orders,
+        pending_orders=pending_orders,
+        urgent_pending_orders=urgent_pending_orders,
+        avg_rating=shop.rating,
+        week_revenue_total=week_revenue_total,
+        week_revenue_change_pct=week_change_pct,
+        revenue_by_day=revenue_points,
+        top_products=top_products,
+        recent_orders=recent_orders,
+    )
+
+
+@router.get("/analytics", response_model=AnalyticsOut)
+async def dashboard_analytics(
+    shop_id: uuid.UUID = Query(...),
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Powers the Analytics tab: all-time totals plus 7-day order-count
+    and revenue trend series, scoped to one owned shop."""
+    await _get_owned_shop_or_403(shop_id, user, db)
+
+    totals_result = await db.execute(
+        select(
+            func.coalesce(
+                func.sum(Order.total_amount).filter(Order.status.in_(RECOGNIZED_STATUSES)), 0
+            ),
+            func.count(Order.id),
+            func.count(func.distinct(Order.user_id)),
+            func.count(Order.id).filter(Order.status.in_(RECOGNIZED_STATUSES)),
+        ).where(Order.shop_id == shop_id)
+    )
+    total_revenue, total_orders, unique_customers, recognized_orders = totals_result.one()
+    conversion_rate_pct = (
+        float(recognized_orders) / float(total_orders) * 100 if total_orders else 0.0
+    )
+
+    today_start = _today_start_utc()
+    week_start = today_start - timedelta(days=6)
+    week_rows_result = await db.execute(
+        select(Order.created_at, Order.status, Order.total_amount).where(
+            Order.shop_id == shop_id, Order.created_at >= week_start
+        )
+    )
+    revenue_by_day, orders_by_day = _bucket_by_day(week_rows_result.all(), week_start, 7)
+
+    orders_points = [
+        DayPoint(
+            label=DAY_LABELS[(week_start + timedelta(days=i)).weekday()],
+            date=(week_start + timedelta(days=i)).date().isoformat(),
+            value=Decimal(orders_by_day[i]),
+        )
+        for i in range(7)
+    ]
+    revenue_points = [
+        DayPoint(
+            label=DAY_LABELS[(week_start + timedelta(days=i)).weekday()],
+            date=(week_start + timedelta(days=i)).date().isoformat(),
+            value=revenue_by_day[i],
+        )
+        for i in range(7)
+    ]
+
+    return AnalyticsOut(
+        total_revenue=total_revenue,
+        total_orders=total_orders,
+        unique_customers=unique_customers,
+        conversion_rate_pct=round(conversion_rate_pct, 1),
+        orders_by_day=orders_points,
+        revenue_by_day=revenue_points,
+    )

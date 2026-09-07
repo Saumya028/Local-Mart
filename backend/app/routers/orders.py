@@ -10,6 +10,7 @@ from app.core import cart as cart_store
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.idempotency import idempotent
+from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
 from app.models import Address, Order, OrderItem, Payment, Product, Profile, Shop
@@ -25,11 +26,18 @@ razorpay_client = razorpay.Client(auth=(settings.razorpay_key_id, settings.razor
 async def checkout(
     payload: CheckoutRequest,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
-    user: Profile = Depends(get_current_user),
+    user: Profile = Depends(rate_limit_by_user("checkout", limit=10, window_seconds=60)),
     db: AsyncSession = Depends(get_db),
 ):
     """
     The whole checkout flow:
+
+    (Rate-limited to 10 attempts/minute per user — see core/rate_limit.py.
+    That's generous for a real shopper, who checks out at most a handful
+    of times a session, but stops a runaway frontend retry loop or a
+    scripted abuser from hammering this endpoint, which is by far the
+    most expensive one in the app: it does row-locking stock updates AND
+    calls the Razorpay API on every single attempt.)
 
     1. Resolve the chosen address (Phase 4: a saved address, not free
        text) and snapshot it into a formatted string — orders should

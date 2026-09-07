@@ -6,11 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate
 from app.core.db import get_db
+from app.core.order_status import RECOGNIZED_STATUSES as RECOGNIZED_ORDER_STATUSES
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
 from app.models import AuditLog, Order, Product, Profile, Shop
 from app.schemas.admin import (
-    VALID_ROLES,
     AdminShopOut,
     AdminUserOut,
     AuditLogOut,
@@ -105,7 +105,10 @@ async def update_user_role(
     if uid == admin.id:
         raise HTTPException(
             status_code=400,
-            detail="You can't change your own role from here — use scripts/promote_user.py if you really need to.",
+            detail=(
+                "You can't change your own role from here — "
+                "use scripts/promote_user.py if you really need to."
+            ),
         )
 
     result = await db.execute(select(Profile).where(Profile.id == uid))
@@ -254,11 +257,21 @@ async def platform_metrics(
     )
 
     total_orders = await db.scalar(select(func.count()).select_from(Order))
+    # "confirmed" here means "a real, paid order that's part of the
+    # fulfillment pipeline" — i.e. any status a paid order can be in
+    # (confirmed/preparing/ready/delivered), not literally the single
+    # status value "confirmed". Once an order moves past "confirmed" in
+    # the shop dashboard it's still very much a sale; it just shouldn't
+    # silently drop out of GMV/order counts because it progressed.
     confirmed_orders = await db.scalar(
-        select(func.count()).select_from(Order).where(Order.status == "confirmed")
+        select(func.count())
+        .select_from(Order)
+        .where(Order.status.in_(RECOGNIZED_ORDER_STATUSES))
     )
     gmv = await db.scalar(
-        select(func.coalesce(func.sum(Order.total_amount), 0)).where(Order.status == "confirmed")
+        select(func.coalesce(func.sum(Order.total_amount), 0)).where(
+            Order.status.in_(RECOGNIZED_ORDER_STATUSES)
+        )
     )
 
     return {
