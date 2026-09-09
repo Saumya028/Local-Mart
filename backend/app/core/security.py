@@ -115,7 +115,16 @@ async def get_current_user(
         # default "customer" profile row. Becoming a shop_owner or admin
         # always happens through a separate, explicit action later, never
         # through this path.
-        profile = Profile(id=user_id, email=email, role="customer")
+        #
+        # `phone` and `full_name` come straight from the JWT so a
+        # phone-only Login (see the Phone tab) or a Signup that collected
+        # a name don't end up as a bare, unnamed row — Supabase includes
+        # the phone number as its own top-level claim for phone-verified
+        # users, and echoes back whatever was passed as `options.data` at
+        # signUp() under `user_metadata`.
+        phone = payload.get("phone") or None
+        full_name = (payload.get("user_metadata") or {}).get("full_name")
+        profile = Profile(id=user_id, email=email, phone=phone, full_name=full_name, role="customer")
         db.add(profile)
         await db.commit()
         await db.refresh(profile)

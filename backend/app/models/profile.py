@@ -25,11 +25,17 @@ class Profile(Base):
     __tablename__ = "profiles"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # Nullable: a phone-only account (see the Login page's Phone tab) has
+    # no email at all — Postgres's UNIQUE constraint still works fine
+    # with this, since it treats every NULL as distinct from every other
+    # NULL, so any number of phone-only profiles can coexist here.
+    email: Mapped[str | None] = mapped_column(String, unique=True, index=True, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Shown on the My Account page and used nowhere else yet (no SMS/call
-    # features in the product) — purely a contact detail the user
-    # maintains themselves via PATCH /auth/me.
+    # Shown on the My Account page. For an email-based account this is
+    # just a contact detail the user sets themselves via PATCH /auth/me.
+    # For a phone-only account (see security.py's get_current_user) it's
+    # populated automatically from the Supabase JWT on first login,
+    # since it IS how that account signs in.
     phone: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # "customer" is the safe default for anyone who just signs up.
