@@ -1,120 +1,101 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/apiClient";
+import { useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/contexts/AuthContext";
-import AddressForm from "@/components/AddressForm";
+import { AccountSidebar, AccountTabKey } from "@/components/account/Sidebar";
+import { OrdersTab } from "@/components/account/OrdersTab";
+import { WishlistTab } from "@/components/account/WishlistTab";
+import { AddressesTab } from "@/components/account/AddressesTab";
+import { SettingsTab } from "@/components/account/SettingsTab";
+import { ComingSoonTab } from "@/components/account/ComingSoonTab";
 
-type Address = { id: string; label: string; line1: string; city: string; is_default: boolean };
+const TAB_TITLES: Record<AccountTabKey, string> = {
+  orders: "My Orders",
+  wishlist: "Wishlist",
+  addresses: "Addresses",
+  payments: "Saved Payments",
+  reviews: "My Reviews",
+  settings: "Settings",
+  notifications: "Notifications",
+};
 
 export default function ProfilePage() {
-  const { profile, loading: authLoading } = useAuth();
-  const [addresses, setAddresses] = useState<Address[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [loadingAddresses, setLoadingAddresses] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { profile, loading: authLoading, loggedIn, refresh } = useAuth();
+  const [tab, setTab] = useState<AccountTabKey>("orders");
+  const [orderCount, setOrderCount] = useState(0);
+  const [wishlistCount, setWishlistCount] = useState(0);
 
-  async function load() {
-    try {
-      const addrs = await apiFetch("/addresses");
-      setAddresses(addrs);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoadingAddresses(false);
-    }
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    // Full reload, same reasoning as AuthStatus.tsx's handleLogout: this
+    // guarantees every component's in-memory state (not just
+    // AuthContext) resets on logout, which matters more on a page this
+    // stateful (orders/wishlist/addresses all cached in local state).
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/";
   }
 
-  useEffect(() => {
-    load();
-  }, []);
-
-  async function removeAddress(id: string) {
-    await apiFetch(`/addresses/${id}`, { method: "DELETE" });
-    load();
-  }
-
-  async function setDefault(id: string) {
-    await apiFetch(`/addresses/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ is_default: true }),
-    });
-    load();
-  }
-
-  if (authLoading || loadingAddresses) {
+  if (authLoading) {
     return (
-      <main className="max-w-2xl mx-auto px-6 py-10">
+      <main className="max-w-5xl mx-auto px-6 py-10">
         <p className="text-sm text-gray-400">Loading…</p>
       </main>
     );
   }
 
-  if (error) {
+  if (!loggedIn || !profile) {
     return (
-      <main className="max-w-2xl mx-auto px-6 py-10">
-        <p className="text-sm text-red-500">Couldn&apos;t load your profile: {error}</p>
+      <main className="max-w-md mx-auto px-6 py-10 space-y-3">
+        <h1 className="text-2xl font-bold">My Account</h1>
+        <p className="text-sm text-gray-500">Log in to see your account.</p>
       </main>
     );
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-10 space-y-8">
-      <section>
-        <h1 className="text-2xl font-bold">My Profile</h1>
-        <p className="text-sm text-gray-500 mt-1">{profile?.email}</p>
-        <p className="text-xs text-gray-400">Role: {profile?.role}</p>
-      </section>
+    <main className="max-w-5xl mx-auto px-6 py-8">
+      <div className="flex items-center gap-2 mb-6">
+        <h1 className="text-xl font-bold text-gray-900">My Account</h1>
+      </div>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Addresses</h2>
-          <button onClick={() => setShowForm(!showForm)} className="text-sm text-blue-600 underline">
-            {showForm ? "Cancel" : "Add address"}
-          </button>
+      <div className="flex flex-col sm:flex-row gap-6">
+        <AccountSidebar
+          profile={profile}
+          orderCount={orderCount}
+          wishlistCount={wishlistCount}
+          tab={tab}
+          onSelectTab={setTab}
+          onLogout={handleLogout}
+        />
+
+        <div className="flex-1 min-w-0 space-y-4">
+          <h2 className="text-lg font-bold text-gray-900">{TAB_TITLES[tab]}</h2>
+
+          {tab === "orders" && <OrdersTab onOrdersLoaded={(orders) => setOrderCount(orders.length)} />}
+          {tab === "wishlist" && <WishlistTab onLoaded={(items) => setWishlistCount(items.length)} />}
+          {tab === "addresses" && <AddressesTab />}
+          {tab === "settings" && <SettingsTab profile={profile} onUpdated={() => refresh()} />}
+          {tab === "payments" && (
+            <ComingSoonTab
+              title="No saved payment methods"
+              description="LocalMart doesn't store your card details — payments go straight through Razorpay at checkout, which is deliberately more secure than a marketplace keeping card numbers on file."
+            />
+          )}
+          {tab === "reviews" && (
+            <ComingSoonTab
+              title="Reviews are coming soon"
+              description="Product and shop reviews aren't built yet — this tab will show reviews you've left once that feature ships."
+            />
+          )}
+          {tab === "notifications" && (
+            <ComingSoonTab
+              title="Notifications are coming soon"
+              description="Order status updates and alerts aren't wired up yet — for now, check My Orders for the latest status."
+            />
+          )}
         </div>
-
-        {showForm && (
-          <AddressForm
-            onSaved={() => {
-              setShowForm(false);
-              load();
-            }}
-            onCancel={() => setShowForm(false)}
-          />
-        )}
-
-        {addresses.length === 0 ? (
-          <p className="text-sm text-gray-400">No saved addresses yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {addresses.map((a) => (
-              <div key={a.id} className="border rounded-lg p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-sm">
-                    {a.label}{" "}
-                    {a.is_default && <span className="text-xs text-green-600">(default)</span>}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {a.line1}, {a.city}
-                  </p>
-                </div>
-                <div className="flex gap-3 text-xs">
-                  {!a.is_default && (
-                    <button onClick={() => setDefault(a.id)} className="text-blue-600 underline">
-                      Set default
-                    </button>
-                  )}
-                  <button onClick={() => removeAddress(a.id)} className="text-red-500 underline">
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      </div>
     </main>
   );
 }

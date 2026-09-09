@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends
 
+from app.core.db import get_db
 from app.core.rate_limit import rate_limit_by_ip
 from app.core.security import get_current_user
 from app.models import Profile
-from app.schemas.profile import ProfileOut
+from app.schemas.profile import ProfileOut, ProfileUpdate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,4 +33,18 @@ async def get_me(current_user: Profile = Depends(get_current_user)):
     blunt a flood of garbage or stolen-token requests before they cost a
     JWKS fetch and a database round trip each.
     """
+    return current_user
+
+
+@router.patch("/me", response_model=ProfileOut)
+async def update_me(
+    payload: ProfileUpdate,
+    current_user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """My Account > Settings — edits full_name/phone only (see ProfileUpdate's docstring for what's deliberately excluded and why)."""
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(current_user, key, value)
+    await db.commit()
+    await db.refresh(current_user)
     return current_user

@@ -10,6 +10,9 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Payment pending",
   confirmed: "Confirmed",
   payment_failed: "Payment failed",
+  preparing: "Preparing",
+  ready: "Out for delivery",
+  delivered: "Delivered",
 };
 
 export default function OrdersPage() {

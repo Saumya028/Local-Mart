@@ -12,6 +12,7 @@ type ProductDetail = {
 };
 
 import AddToCartButton from "@/components/AddToCartButton";
+import WishlistButton from "@/components/WishlistButton";
 
 async function getProduct(id: string): Promise<ProductDetail | null> {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -70,7 +71,10 @@ export default async function ProductPage({ params }: { params: { id: string } }
         </div>
       )}
 
-      <AddToCartButton productId={product.id} inStock={product.stock_qty > 0} />
+      <div className="flex items-center gap-3">
+        <AddToCartButton productId={product.id} inStock={product.stock_qty > 0} />
+        <WishlistButton productId={product.id} />
+      </div>
     </main>
   );
 }

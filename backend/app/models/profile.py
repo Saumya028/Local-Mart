@@ -27,6 +27,10 @@ class Profile(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     full_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Shown on the My Account page and used nowhere else yet (no SMS/call
+    # features in the product) — purely a contact detail the user
+    # maintains themselves via PATCH /auth/me.
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # "customer" is the safe default for anyone who just signs up.
     # Becoming a "shop_owner" happens through an explicit action later

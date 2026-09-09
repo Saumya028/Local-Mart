@@ -8,6 +8,7 @@ from app.models.platform_settings import PlatformSettings
 from app.models.product import Product
 from app.models.profile import Profile
 from app.models.shop import Shop
+from app.models.wishlist_item import WishlistItem
 
 # Alembic's env.py imports `Base` from here and reads `Base.metadata`.
 # Every model file must be imported above, or Alembic won't know it exists
@@ -23,4 +24,5 @@ __all__ = [
     "Payment",
     "AuditLog",
     "PlatformSettings",
+    "WishlistItem",
 ]

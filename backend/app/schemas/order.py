@@ -26,9 +26,22 @@ class OrderOut(BaseModel):
     total_amount: Decimal
     delivery_address: str
     created_at: datetime
+    # Added for the My Account > My Orders list (a card per order needs
+    # the shop's name and a rough item count without a second round trip
+    # per order) — both filled in by a join in routers/orders.py's
+    # list_orders, so they default to None/0 only for callers that build
+    # an OrderOut without that join (there currently are none, but the
+    # defaults keep this schema safe to reuse elsewhere without a join).
+    shop_name: str | None = None
+    item_count: int = 0
 
 
 class OrderItemOut(BaseModel):
+    # Guaranteed present — OrderItem.product_id is ON DELETE RESTRICT
+    # against products, so a product can never actually be deleted while
+    # an order references it. Used by the frontend's "Reorder" action to
+    # add each item back to the cart via POST /cart/items.
+    product_id: uuid.UUID
     product_name: str
     quantity: int
     unit_price: Decimal

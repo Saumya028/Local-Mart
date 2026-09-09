@@ -31,9 +31,6 @@ export default function Header() {
           <Link href="/search" className="text-gray-600 hover:text-gray-900">
             Search
           </Link>
-          <Link href="/orders" className="text-gray-600 hover:text-gray-900">
-            Orders
-          </Link>
           {canSell && (
             <Link href="/shop/dashboard" className="text-gray-600 hover:text-gray-900">
               Sell
@@ -48,7 +45,7 @@ export default function Header() {
             Cart
           </Link>
           <Link href="/profile" className="text-gray-600 hover:text-gray-900">
-            Profile
+            My Account
           </Link>
           <AuthStatus />
         </nav>

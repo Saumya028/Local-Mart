@@ -18,5 +18,19 @@ class ProfileOut(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str | None
+    phone: str | None
     role: str
     created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    """
+    My Account > Settings. Deliberately does NOT include `email` or
+    `role` — email changes go through Supabase Auth (which owns login
+    identity, not this table), and role changes are an admin action
+    (see routers/admin.py's update_user_role), never something a user
+    sets on themselves.
+    """
+
+    full_name: str | None = None
+    phone: str | None = None

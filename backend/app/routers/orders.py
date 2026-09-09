@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import razorpay
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
@@ -184,12 +184,38 @@ async def list_orders(
     user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Order history — deliberately lightweight (no line items) since a
-    list view only needs enough to identify and link to each order."""
-    result = await db.execute(
-        select(Order).where(Order.user_id == user.id).order_by(Order.created_at.desc())
+    """
+    Order history for My Account > My Orders. Joins in the shop's name
+    and a total item quantity so each card can be rendered from this one
+    call — deliberately still no line items (see OrderDetailOut for
+    those), just enough for a list.
+    """
+    item_counts = (
+        select(OrderItem.order_id, func.coalesce(func.sum(OrderItem.quantity), 0).label("item_count"))
+        .group_by(OrderItem.order_id)
+        .subquery()
     )
-    return result.scalars().all()
+    stmt = (
+        select(Order, Shop.name, func.coalesce(item_counts.c.item_count, 0))
+        .join(Shop, Shop.id == Order.shop_id)
+        .outerjoin(item_counts, item_counts.c.order_id == Order.id)
+        .where(Order.user_id == user.id)
+        .order_by(Order.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "id": order.id,
+            "shop_id": order.shop_id,
+            "status": order.status,
+            "total_amount": order.total_amount,
+            "delivery_address": order.delivery_address,
+            "created_at": order.created_at,
+            "shop_name": shop_name,
+            "item_count": item_count,
+        }
+        for order, shop_name, item_count in result.all()
+    ]
 
 
 @router.get("/orders/{order_id}", response_model=OrderDetailOut)
@@ -223,6 +249,7 @@ async def get_order(
     )
     items = [
         {
+            "product_id": item.product_id,
             "product_name": name,
             "quantity": item.quantity,
             "unit_price": item.unit_price,
@@ -233,5 +260,7 @@ async def get_order(
 
     data = OrderOut.model_validate(order).model_dump(mode="json")
     data["shop"] = ShopOut.model_validate(shop).model_dump(mode="json") if shop else None
+    data["shop_name"] = shop.name if shop else None
+    data["item_count"] = sum(i["quantity"] for i in items)
     data["items"] = items
     return data
