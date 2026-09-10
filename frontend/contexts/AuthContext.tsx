@@ -11,7 +11,7 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/apiClient";
 
-type Profile = { id: string; email: string; full_name: string | null; role: string };
+type Profile = { id: string; email: string | null; full_name: string | null; phone: string | null; role: string; created_at: string };
 
 type AuthContextValue = {
   profile: Profile | null;

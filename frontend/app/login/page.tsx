@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { setPostLoginRedirect, consumePostLoginRedirect } from "@/lib/postLoginRedirect";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 
 type Tab = "email" | "phone";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { checking } = useGuestOnly();
   const [tab, setTab] = useState<Tab>("email");
   const [shortcut, setShortcut] = useState<"shop_owner" | "admin" | null>(null);
 
@@ -83,6 +85,14 @@ export default function LoginPage() {
     }
     setShortcut(target);
     setPostLoginRedirect(target === "shop_owner" ? "/shop/dashboard" : "/admin");
+  }
+
+  if (checking) {
+    return (
+      <AuthLayout title="Welcome back" subtitle="Sign in to your LocalMart account">
+        <p className="text-sm text-gray-400">Loading…</p>
+      </AuthLayout>
+    );
   }
 
   return (

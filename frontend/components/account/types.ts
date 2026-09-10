@@ -45,7 +45,7 @@ export type Address = {
 
 export type AccountProfile = {
   id: string;
-  email: string;
+  email: string | null;
   full_name: string | null;
   phone: string | null;
   role: string;
@@ -82,8 +82,8 @@ export function formatDate(iso: string): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function initials(name: string | null, email: string): string {
-  const source = name?.trim() || email;
+export function initials(name: string | null, email: string | null, phone?: string | null): string {
+  const source = name?.trim() || email || phone || "?";
   return source
     .split(/\s+/)
     .map((p) => p[0])

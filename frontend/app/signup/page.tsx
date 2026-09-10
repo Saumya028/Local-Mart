@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthLayout } from "@/components/auth/AuthLayout";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 
 export default function SignupPage() {
   const router = useRouter();
+  const { checking } = useGuestOnly();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,6 +56,14 @@ export default function SignupPage() {
     // Email confirmation is required — no session yet, so there's
     // nothing to redirect into until they click the link.
     setCheckEmail(true);
+  }
+
+  if (checking) {
+    return (
+      <AuthLayout title="Create your account" subtitle="Join LocalMart in seconds">
+        <p className="text-sm text-gray-400">Loading…</p>
+      </AuthLayout>
+    );
   }
 
   if (checkEmail) {

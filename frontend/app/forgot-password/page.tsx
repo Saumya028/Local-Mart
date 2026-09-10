@@ -4,8 +4,10 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthLayout } from "@/components/auth/AuthLayout";
+import { useGuestOnly } from "@/lib/useGuestOnly";
 
 export default function ForgotPasswordPage() {
+  const { checking } = useGuestOnly();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +26,14 @@ export default function ForgotPasswordPage() {
       return;
     }
     setSent(true);
+  }
+
+  if (checking) {
+    return (
+      <AuthLayout title="Reset your password" subtitle="We'll email you a link to get back in">
+        <p className="text-sm text-gray-400">Loading…</p>
+      </AuthLayout>
+    );
   }
 
   if (sent) {

@@ -54,7 +54,7 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
         <div>
           <label className="text-xs text-gray-500 mb-1 block">Email</label>
           <input
-            value={profile.email}
+            value={profile.email ?? "No email on file (signed in by phone)"}
             disabled
             className="w-full border border-gray-100 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-400"
           />
