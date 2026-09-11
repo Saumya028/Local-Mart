@@ -11,6 +11,7 @@ type ProductDetail = {
   shop: ShopInfo | null;
 };
 
+import Link from "next/link";
 import AddToCartButton from "@/components/AddToCartButton";
 import WishlistButton from "@/components/WishlistButton";
 
@@ -65,8 +66,11 @@ export default async function ProductPage({ params }: { params: { id: string } }
       {product.shop && (
         <div className="border-t pt-4 mt-4">
           <p className="text-sm text-gray-500">
-            Sold by <span className="font-medium">{product.shop.name}</span> · ★{" "}
-            {product.shop.rating.toFixed(1)}
+            Sold by{" "}
+            <Link href={`/store/${product.shop.id}`} className="font-medium text-blue-600 hover:underline">
+              {product.shop.name}
+            </Link>{" "}
+            · ★ {product.shop.rating.toFixed(1)}
           </p>
         </div>
       )}

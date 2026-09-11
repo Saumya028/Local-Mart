@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { AccountSidebar, AccountTabKey } from "@/components/account/Sidebar";
@@ -20,9 +21,37 @@ const TAB_TITLES: Record<AccountTabKey, string> = {
   notifications: "Notifications",
 };
 
+const VALID_TABS = Object.keys(TAB_TITLES) as AccountTabKey[];
+
 export default function ProfilePage() {
+  // useSearchParams() requires a Suspense boundary above it to be
+  // statically prerenderable (Next.js bails out of static generation
+  // otherwise, which errors the whole production build) — the actual
+  // page content is pulled into ProfilePageContent so this wrapper can
+  // provide that boundary without changing anything about the page
+  // itself.
+  return (
+    <Suspense
+      fallback={
+        <main className="max-w-5xl mx-auto px-6 py-10">
+          <p className="text-sm text-gray-400">Loading…</p>
+        </main>
+      }
+    >
+      <ProfilePageContent />
+    </Suspense>
+  );
+}
+
+function ProfilePageContent() {
   const { profile, loading: authLoading, loggedIn, refresh } = useAuth();
-  const [tab, setTab] = useState<AccountTabKey>("orders");
+  const searchParams = useSearchParams();
+  // Lets other pages deep-link straight into a tab — e.g. the homepage's
+  // "Set location" shortcut goes to /profile?tab=addresses instead of
+  // dumping the user on My Orders and making them click again.
+  const requestedTab = searchParams.get("tab") as AccountTabKey | null;
+  const initialTab = requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "orders";
+  const [tab, setTab] = useState<AccountTabKey>(initialTab);
   const [orderCount, setOrderCount] = useState(0);
   const [wishlistCount, setWishlistCount] = useState(0);
 

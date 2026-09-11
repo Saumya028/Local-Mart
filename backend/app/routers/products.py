@@ -46,13 +46,16 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
 async def search_products(
     q: str | None = Query(default=None, description="Matched against product name/description"),
     category: str | None = Query(default=None),
+    shop_id: str | None = Query(default=None, description="Restrict results to one shop's storefront"),
     limit: int = Query(default=24, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Backs the Search page. Deliberately NOT cached — search queries vary
-    too much (different text, different filters) for cache-aside to pay
-    off; almost every call would be a cache miss anyway.
+    Backs the Search page AND the public storefront page
+    (`/store/[id]`, via `shop_id`) — deliberately NOT cached — search
+    queries vary too much (different text, different filters) for
+    cache-aside to pay off; almost every call would be a cache miss
+    anyway.
 
     We're using a plain case-insensitive substring match (ILIKE) here,
     which is genuinely fine for a catalog of a few thousand products. If
@@ -65,6 +68,16 @@ async def search_products(
 
     if category:
         stmt = stmt.where(Product.category == category)
+
+    if shop_id:
+        sid = parse_uuid_or_404(shop_id, "Shop")
+        # Joined against Shop's own public-visibility rule (same as
+        # GET /shops/{id} above) — a pending/rejected/deactivated shop's
+        # products must stay invisible here too, not just off its own
+        # page, or its catalog would still leak through this filter.
+        stmt = stmt.join(Shop, Shop.id == Product.shop_id).where(
+            Product.shop_id == sid, Shop.is_active.is_(True), Shop.approval_status == "approved"
+        )
 
     if q:
         pattern = f"%{q}%"

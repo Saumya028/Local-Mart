@@ -17,22 +17,27 @@ router = APIRouter(prefix="/shops", tags=["shops"])
 @router.get("", response_model=list[ShopOut])
 async def list_shops(
     category: str | None = Query(default=None),
+    q: str | None = Query(default=None, description="Case-insensitive substring match on shop name"),
+    limit: int = Query(default=50, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Backs the "Shops near you" section on the Landing page.
+    Backs the "Shops near you" section on the Landing page, and — with
+    `q`/`category` — the /stores browse-all page's search and category
+    filter.
 
-    We only cache the unfiltered call — that's the one every Landing page
-    load hits identically. A `?category=` filtered call is rarer and more
-    varied, so it goes straight to Postgres; caching every possible filter
-    value isn't worth the complexity at this stage.
+    We only cache the fully-unfiltered call at the default limit — that's
+    the one every Landing page load hits identically. A `q`/`category`
+    filtered call, or a non-default `limit`, is rarer and more varied, so
+    it goes straight to Postgres; caching every possible combination
+    isn't worth the complexity at this stage.
     """
     # A shop must be BOTH is_active (currently open) AND approval_status
     # == "approved" (an admin has signed off on it) to show up in the
     # public catalog — a brand-new, still-pending application is invisible
     # here even though its is_active default is fine, exactly like a
     # rejected/deactivated shop is.
-    if category is None:
+    if category is None and q is None and limit == 50:
         async def load():
             result = await db.execute(
                 select(Shop)
@@ -45,16 +50,14 @@ async def list_shops(
 
         return await cache_get_or_set("shops:list", ttl_seconds=60, loader=load)
 
-    result = await db.execute(
-        select(Shop)
-        .where(
-            Shop.is_active.is_(True),
-            Shop.approval_status == "approved",
-            Shop.category == category,
-        )
-        .order_by(Shop.rating.desc())
-        .limit(50)
-    )
+    stmt = select(Shop).where(Shop.is_active.is_(True), Shop.approval_status == "approved")
+    if category is not None:
+        stmt = stmt.where(Shop.category == category)
+    if q:
+        stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
+    stmt = stmt.order_by(Shop.rating.desc()).limit(limit)
+
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 
@@ -104,10 +107,21 @@ async def create_shop(
 
 @router.get("/{shop_id}", response_model=ShopOut)
 async def get_shop(shop_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Backs the public storefront page (`/store/[id]`). Filters on the same
+    is_active + approval_status == "approved" rule as list_shops above —
+    without this, a pending/rejected/deactivated shop would still be
+    directly fetchable by anyone who had (or guessed) its ID, even though
+    it's invisible everywhere it'd normally be discovered from.
+    """
     sid = parse_uuid_or_404(shop_id, "Shop")
 
     async def load():
-        result = await db.execute(select(Shop).where(Shop.id == sid))
+        result = await db.execute(
+            select(Shop).where(
+                Shop.id == sid, Shop.is_active.is_(True), Shop.approval_status == "approved"
+            )
+        )
         shop = result.scalar_one_or_none()
         return ShopOut.model_validate(shop).model_dump(mode="json") if shop else None
 

@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import AuthStatus from "./AuthStatus";
 import { useAuth } from "@/contexts/AuthContext";
+
+const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 /**
  * "use client" here because it renders AuthStatus, which needs the
@@ -12,6 +15,18 @@ import { useAuth } from "@/contexts/AuthContext";
  */
 export default function Header() {
   const { profile } = useAuth();
+  const pathname = usePathname();
+
+  // The auth pages render their own full-bleed two-panel layout with
+  // their own "Back to home" link, and "/" renders its own
+  // MarketingHeader (components/home/MarketingHeader.tsx) — a
+  // discovery-focused header with different nav (Discover/Categories/
+  // Stores/For Businesses) than this transactional one
+  // (Search/Cart/My Account). Rendering both here AND there would stack
+  // two headers on the same page.
+  if (pathname === "/" || AUTH_ROUTES.some((route) => pathname?.startsWith(route))) {
+    return null;
+  }
 
   // "Sell" only shows for accounts that can actually use it. A plain
   // customer never even sees the link — this is a UX nicety, not the

@@ -30,6 +30,7 @@ from app.routers import (  # noqa: E402
     products,
     shop_dashboard,
     shops,
+    stats,
     webhooks,
     wishlist,
 )
@@ -147,6 +148,7 @@ app.include_router(cart.router)
 app.include_router(addresses.router)
 app.include_router(orders.router)
 app.include_router(wishlist.router)
+app.include_router(stats.router)
 app.include_router(shop_dashboard.router)
 app.include_router(admin.router)
 app.include_router(webhooks.router)
