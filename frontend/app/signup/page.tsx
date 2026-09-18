@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { useGuestOnly } from "@/lib/useGuestOnly";
+import { consumePostLoginRedirect } from "@/lib/postLoginRedirect";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -47,8 +48,11 @@ export default function SignupPage() {
 
     if (data.session) {
       // Email confirmation is off for this project — signUp already
-      // returned a live session, so there's nothing to wait on.
-      router.push("/");
+      // returned a live session, so there's nothing to wait on. Same
+      // redirect mechanism the Login page uses: if they got here via
+      // "List Your Shop" (see /shop/dashboard), this sends them straight
+      // back there instead of to the homepage.
+      router.push(consumePostLoginRedirect("/"));
       router.refresh();
       return;
     }
@@ -139,8 +143,8 @@ export default function SignupPage() {
         </div>
 
         <p className="text-xs text-gray-400">
-          Every account starts as a customer. Selling on LocalMart requires your account to be approved by a
-          platform admin afterward.
+          Every account starts as a customer. You can apply to list your own shop any time — approval of that
+          shop listing is what a platform admin reviews.
         </p>
 
         {error && <p className="text-sm text-red-500">{error}</p>}

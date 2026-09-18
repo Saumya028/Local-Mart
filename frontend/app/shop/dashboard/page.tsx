@@ -1,8 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
+import { setPostLoginRedirect } from "@/lib/postLoginRedirect";
 import { Sidebar, TabKey } from "@/components/shop-dashboard/Sidebar";
 import { Topbar } from "@/components/shop-dashboard/Topbar";
 import { DashboardTab } from "@/components/shop-dashboard/DashboardTab";
@@ -24,7 +26,8 @@ const TAB_TITLES: Record<TabKey, string> = {
 };
 
 export default function ShopDashboardPage() {
-  const { profile, loading: authLoading, loggedIn } = useAuth();
+  const router = useRouter();
+  const { profile, loading: authLoading, loggedIn, refresh } = useAuth();
   const [shops, setShops] = useState<Shop[]>([]);
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
@@ -60,6 +63,30 @@ export default function ShopDashboardPage() {
     }
   }, [canSell, authLoading]);
 
+  // Applying to sell is self-service (see POST /shops) — a guest just
+  // needs to be signed in first, not turned away. setPostLoginRedirect
+  // is the same mechanism the Login page's own shortcuts use: it records
+  // where to land after a real sign-in succeeds, so a guest who clicks
+  // "List Your Shop" goes login -> straight back here -> the apply form,
+  // in one flow, instead of a dead-end "log in to continue" message.
+  useEffect(() => {
+    if (!authLoading && !loggedIn) {
+      setPostLoginRedirect("/shop/dashboard");
+      router.replace("/login");
+    }
+  }, [authLoading, loggedIn, router]);
+
+  // After a successful application: pick up the fresh role (a plain
+  // customer just became a shop_owner server-side, in the same
+  // transaction as the shop row — see POST /shops) and load the shop
+  // that was just created, so the page moves straight into showing its
+  // pending-approval status instead of re-showing the apply form.
+  async function handleShopApplied() {
+    await refresh();
+    setLoadingShops(true);
+    await loadShops();
+  }
+
   // Keep the "pending orders" badge in the sidebar fresh across tab
   // switches, so it stays accurate right after an order is Accepted
   // elsewhere in the UI without a full page reload.
@@ -78,7 +105,9 @@ export default function ShopDashboardPage() {
     };
   }, [selectedShopId, tab, shops]);
 
-  if (authLoading || (canSell && loadingShops)) {
+  if (authLoading || !loggedIn || (canSell && loadingShops)) {
+    // Covers auth still resolving, AND the brief moment before the
+    // effect above sends a guest on to /login — never a dead end.
     return (
       <main className="max-w-4xl mx-auto px-6 py-10">
         <p className="text-sm text-gray-400">Loading…</p>
@@ -86,41 +115,17 @@ export default function ShopDashboardPage() {
     );
   }
 
-  if (!loggedIn) {
-    return (
-      <main className="max-w-md mx-auto px-6 py-10 space-y-3">
-        <h1 className="text-2xl font-bold">Shop Dashboard</h1>
-        <p className="text-sm text-gray-500">Log in to continue.</p>
-      </main>
-    );
-  }
-
-  // The core of this fix: selling is NOT self-service. A plain customer
-  // account cannot create a shop or reach anything below this point —
-  // becoming a shop_owner is an explicit promotion (see
-  // backend/scripts/promote_user.py until the Admin Panel exists), not a
-  // button any account can click. This mirrors exactly what the backend
-  // enforces via require_role on every one of these endpoints.
-  if (!canSell) {
-    return (
-      <main className="max-w-md mx-auto px-6 py-10 space-y-3">
-        <h1 className="text-2xl font-bold">Shop Dashboard</h1>
-        <p className="text-sm text-gray-500">
-          Selling isn&apos;t available for your account yet. Becoming a seller
-          requires your account to be upgraded by a platform admin — this
-          isn&apos;t something you can do yourself from here.
-        </p>
-      </main>
-    );
-  }
-
-  // Reaching here means the account IS shop_owner/admin, but owns zero
-  // shops yet (e.g. just promoted) — this is the "apply for your first
-  // shop" screen, not a "become a seller" screen.
-  if (shops.length === 0) {
+  // Reaching here, the visitor is signed in. Selling is self-service: a
+  // plain customer goes straight to the apply form, no separate
+  // "request access" step first — submitting it is what makes them a
+  // shop_owner (see POST /shops). The same form covers an
+  // already-promoted account that just doesn't have a shop yet (e.g.
+  // right after their first application, or an existing owner/admin
+  // adding another shop).
+  if (!canSell || shops.length === 0) {
     return (
       <main className="max-w-lg mx-auto px-6 py-10">
-        <ApplyForm userId={profile!.id} onCreated={loadShops} loadError={error} />
+        <ApplyForm userId={profile!.id} onCreated={handleShopApplied} loadError={error} />
       </main>
     );
   }

@@ -22,7 +22,7 @@ app/
     health.py, auth.py, categories.py, products.py
     cart.py, addresses.py, webhooks.py
     shops.py, orders.py, shop_dashboard.py, admin.py
-migrations/                 # Alembic (0001-0006 — 0005 added the Admin Panel's shop-approval/user-suspend/settings tables, 0006 added shop verification documents + rejection reason)
+migrations/                 # Alembic (0001-0008 — 0005 added the Admin Panel's shop-approval/user-suspend/settings tables, 0006 added shop verification documents + rejection reason, 0007 added profile phone + wishlist for the My Account page, 0008 made profiles.email nullable for phone-only Login accounts)
 scripts/
   seed.py, promote_user.py
   backup_restore_check.sh (new)   # backup/restore verification runbook
@@ -293,13 +293,16 @@ follow-up, not a surprise later.
   shop owner correctly gets denied on another shop's products/orders, an
   admin is allowed everywhere, and a `None` shop (bad ID) is never
   treated as owned.
-- **Design correction (5.2): selling is NOT self-service.** Every
-  `/dashboard/*` endpoint and `POST /shops` require `role="shop_owner"`
-  or `"admin"` via `require_role(...)`, and there is **no endpoint that
-  lets an account promote itself.** Becoming a shop_owner is an explicit
-  action taken from outside - as of Phase 6, that's the Admin Panel's
-  "approve this seller" action, replacing what used to be a one-off
-  script for every promotion.
+- **Applying to sell is self-service; the shop listing going live is
+  not.** `POST /shops` accepts any authenticated, non-suspended account
+  and promotes a plain `customer` to `shop_owner` in the same
+  transaction as their application (no separate admin step to unlock
+  the Shop Dashboard). What's still admin-gated is the **shop itself**:
+  every new shop is created `approval_status="pending"` and
+  `is_active=False`, invisible on the storefront until an admin approves
+  it from the Manage Shops queue - so `/dashboard/*` (managing products,
+  orders, etc.) only opens up once that specific shop is approved, via
+  `_require_approved_shop`, regardless of the owner's role.
 - **`shop_id` in request bodies is never trusted by itself.** `POST
   /dashboard/products` takes a `shop_id`, but the endpoint still looks up
   that shop and checks ownership before creating anything - a malicious

@@ -1,4 +1,3 @@
-import { MarketingHeader } from "@/components/home/MarketingHeader";
 import { MarketingFooter } from "@/components/home/MarketingFooter";
 import { HeroSearch } from "@/components/home/HeroSearch";
 import { CategoryGrid, CategoryData } from "@/components/home/CategoryGrid";
@@ -42,8 +41,6 @@ export default async function Home() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <MarketingHeader />
-
       <main className="flex-1">
         <section className="bg-gradient-to-br from-blue-50 via-white to-emerald-50 px-6 py-16 sm:py-20 text-center">
           <div className="max-w-3xl mx-auto space-y-6">

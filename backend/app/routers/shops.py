@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
-from app.core.security import require_role
+from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
 from app.models import Profile, Shop
 from app.schemas.shop import ShopCreate, ShopOut
@@ -64,20 +64,18 @@ async def list_shops(
 @router.post("", response_model=ShopOut)
 async def create_shop(
     payload: ShopCreate,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Creating a shop is restricted to accounts that are ALREADY
-    shop_owner or admin — not self-service for a plain customer. Becoming
-    a shop_owner in the first place is an explicit promotion, not
-    something an account grants itself by clicking a button (see
-    scripts/promote_user.py until the Admin Panel in Phase 6 ships a
-    proper UI for this).
-
-    This lets an existing shop owner run more than one shop, while a
-    customer hitting this endpoint gets a clean 403 from require_role
-    before ever reaching this function body.
+    Applying to sell is self-service for any authenticated, non-suspended
+    account — a plain customer submitting this becomes a shop_owner
+    immediately (see the promotion below), no separate admin step
+    required to unlock the Shop Dashboard. What an admin still reviews
+    afterward is the SHOP LISTING itself (approval_status, below) —
+    becoming a seller and getting your storefront live are two different
+    gates. An existing shop_owner hitting this again just adds another
+    shop under the same account; an admin can do the same.
     """
     # New shops start "pending"/unverified and closed — they only become
     # visible on the storefront once an admin approves them from the
@@ -96,6 +94,17 @@ async def create_shop(
         documents=[d.model_dump() for d in payload.documents],
     )
     db.add(shop)
+
+    # The actual self-service promotion: a plain customer applying to
+    # sell becomes a shop_owner right here, in the same transaction as
+    # their shop application — not a separate step anyone has to
+    # perform on their behalf. `user` is already attached to this same
+    # `db` session (it was loaded by get_current_user above), so mutating
+    # it and committing persists both the new shop and the role change
+    # atomically. An admin applying again just stays admin.
+    if user.role == "customer":
+        user.role = "shop_owner"
+
     await db.commit()
     await db.refresh(shop)
 

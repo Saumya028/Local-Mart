@@ -5,10 +5,19 @@ import { usePathname } from "next/navigation";
 
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
+// Same reasoning as Header.tsx: these pages render their own dashboard
+// app-shell (Sidebar + Topbar) and shouldn't also get this site footer
+// tacked on underneath it.
+const APP_SHELL_ROUTES = ["/admin", "/shop/dashboard"];
+
 export default function Footer() {
   const pathname = usePathname();
-  // Same reasoning as Header.tsx: "/" renders its own MarketingFooter.
-  if (pathname === "/" || AUTH_ROUTES.some((route) => pathname?.startsWith(route))) {
+  // "/" renders its own MarketingFooter (see app/page.tsx).
+  if (
+    pathname === "/" ||
+    AUTH_ROUTES.some((route) => pathname?.startsWith(route)) ||
+    APP_SHELL_ROUTES.some((route) => pathname?.startsWith(route))
+  ) {
     return null;
   }
 
