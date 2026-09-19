@@ -1,14 +1,28 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
+import { NearMeToggle } from "@/components/stores/NearMeToggle";
 
-type Shop = { id: string; name: string; category: string; rating: number; created_at: string };
+type Shop = {
+  id: string;
+  name: string;
+  category: string;
+  rating: number;
+  created_at: string;
+  city: string | null;
+  distance_km: number | null;
+};
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function searchShops(q?: string, category?: string): Promise<Shop[]> {
+async function searchShops(q?: string, category?: string, lat?: string, lng?: string): Promise<Shop[]> {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (category) params.set("category", category);
+  if (lat && lng) {
+    params.set("lat", lat);
+    params.set("lng", lng);
+  }
   params.set("limit", "100");
 
   try {
@@ -25,9 +39,10 @@ async function searchShops(q?: string, category?: string): Promise<Shop[]> {
 export default async function StoresPage({
   searchParams,
 }: {
-  searchParams: { q?: string; category?: string };
+  searchParams: { q?: string; category?: string; lat?: string; lng?: string };
 }) {
-  const shops = await searchShops(searchParams.q, searchParams.category);
+  const shops = await searchShops(searchParams.q, searchParams.category, searchParams.lat, searchParams.lng);
+  const nearMeActive = Boolean(searchParams.lat && searchParams.lng);
 
   const heading = searchParams.category
     ? `${searchParams.category} stores`
@@ -37,9 +52,14 @@ export default async function StoresPage({
 
   return (
     <main className="max-w-6xl mx-auto px-6 py-10 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">{heading}</h1>
-        <p className="text-sm text-gray-500 mt-1">{shops.length} shop{shops.length === 1 ? "" : "s"}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{heading}</h1>
+          <p className="text-sm text-gray-500 mt-1">{shops.length} shop{shops.length === 1 ? "" : "s"}</p>
+        </div>
+        <Suspense fallback={null}>
+          <NearMeToggle active={nearMeActive} radiusKm={null} />
+        </Suspense>
       </div>
 
       <form className="flex gap-2 max-w-md">
@@ -50,6 +70,12 @@ export default async function StoresPage({
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {searchParams.category && <input type="hidden" name="category" value={searchParams.category} />}
+        {nearMeActive && (
+          <>
+            <input type="hidden" name="lat" value={searchParams.lat} />
+            <input type="hidden" name="lng" value={searchParams.lng} />
+          </>
+        )}
         <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition">
           Search
         </button>
@@ -62,7 +88,11 @@ export default async function StoresPage({
       )}
 
       {shops.length === 0 ? (
-        <p className="text-sm text-gray-400">No stores found.</p>
+        <p className="text-sm text-gray-400">
+          {nearMeActive
+            ? "No stores found within delivery range of your location."
+            : "No stores found."}
+        </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {shops.map((shop) => (
@@ -77,7 +107,12 @@ export default async function StoresPage({
               <div className="p-4">
                 <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
                 <p className="font-semibold text-gray-900 text-sm mt-0.5">{shop.name}</p>
-                <p className="text-xs text-amber-500 mt-1.5">★ {shop.rating.toFixed(1)}</p>
+                <div className="flex items-center justify-between mt-1.5">
+                  <p className="text-xs text-amber-500">★ {shop.rating.toFixed(1)}</p>
+                  {shop.distance_km != null && (
+                    <p className="text-xs text-emerald-600 font-medium">{shop.distance_km} km</p>
+                  )}
+                </div>
               </div>
             </Link>
           ))}

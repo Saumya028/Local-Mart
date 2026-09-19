@@ -33,6 +33,19 @@ class Shop(Base):
         UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Free-text shop address + coordinates, captured on the "Apply to
+    # sell" form (address_line1/city typed, lat/lng via the browser's
+    # Geolocation API). Nullable because shops created before this
+    # feature have none on file — GET /shops's distance filter (see
+    # routers/shops.py) simply skips any shop missing coordinates rather
+    # than erroring. This is deliberately separate from `addresses`,
+    # which models a *customer's* delivery address, not a seller's
+    # storefront location.
+    address_line1: Mapped[str | None] = mapped_column(String, nullable=True)
+    city: Mapped[str | None] = mapped_column(String, nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     rating: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     # Admin can deactivate a shop (Phase 6) without deleting its data.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -72,4 +85,7 @@ class Shop(Base):
     # index serves both the filter and the sort together, rather than
     # Postgres using a single-column index for one and sorting the rest
     # in memory.
-    __table_args__ = (Index("ix_shops_is_active_rating", "is_active", "rating"),)
+    __table_args__ = (
+        Index("ix_shops_is_active_rating", "is_active", "rating"),
+        Index("ix_shops_lat_lng", "latitude", "longitude"),
+    )

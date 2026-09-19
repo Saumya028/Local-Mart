@@ -30,6 +30,15 @@ class ShopCreate(BaseModel):
     # operable the instant this endpoint returned, with nothing uploaded
     # and nothing blocking it.
     documents: list[ShopDocument]
+    # Required from here on (see migration 0009) — without these, a shop
+    # can never appear in a customer's "near me" search, which is the
+    # whole point of a *local* marketplace. address_line1/city are typed
+    # by the applicant; latitude/longitude come from the browser's
+    # Geolocation API on the apply form (see frontend/app/shop/dashboard).
+    address_line1: str
+    city: str
+    latitude: float
+    longitude: float
 
     @field_validator("documents")
     @classmethod
@@ -41,17 +50,49 @@ class ShopCreate(BaseModel):
             )
         return v
 
+    @field_validator("latitude")
+    @classmethod
+    def lat_in_range(cls, v: float) -> float:
+        if not -90 <= v <= 90:
+            raise ValueError("latitude must be between -90 and 90")
+        return v
+
+    @field_validator("longitude")
+    @classmethod
+    def lng_in_range(cls, v: float) -> float:
+        if not -180 <= v <= 180:
+            raise ValueError("longitude must be between -180 and 180")
+        return v
+
 
 class ShopUpdate(BaseModel):
     name: str | None = None
     category: str | None = None
     is_active: bool | None = None
+    address_line1: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     # Lets an owner resubmit documents after a rejection or a
     # "Request Docs" admin action, via the SAME endpoint
     # (PUT /dashboard/shops/{id}) rather than a separate one — see that
     # route's handling: setting this also flips docs_status back to
     # "submitted" and clears any prior rejection_reason.
     documents: list[ShopDocument] | None = None
+
+    @field_validator("latitude")
+    @classmethod
+    def lat_in_range(cls, v: float | None) -> float | None:
+        if v is not None and not -90 <= v <= 90:
+            raise ValueError("latitude must be between -90 and 90")
+        return v
+
+    @field_validator("longitude")
+    @classmethod
+    def lng_in_range(cls, v: float | None) -> float | None:
+        if v is not None and not -180 <= v <= 180:
+            raise ValueError("longitude must be between -180 and 180")
+        return v
 
 
 class ShopOut(BaseModel):
@@ -73,6 +114,18 @@ class ShopOut(BaseModel):
     rating: float
     is_active: bool
     created_at: datetime
+    # Public — a storefront's rough location/address is meant to be
+    # discoverable, same as any local business listing. All nullable
+    # since shops created before migration 0009 have none on file.
+    address_line1: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    # Only ever set by GET /shops when called with ?lat=&lng= (see
+    # routers/shops.py) — a straight-line distance in km from the point
+    # given, used to power "near me" search and sort. None on every other
+    # call, including the plain unfiltered GET /shops.
+    distance_km: float | None = None
 
 
 class DashboardShopOut(ShopOut):

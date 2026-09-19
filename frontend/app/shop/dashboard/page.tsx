@@ -193,9 +193,43 @@ function ApplyForm({
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [addressLine1, setAddressLine1] = useState("");
+  const [city, setCity] = useState("");
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Customers can only find this shop in "near me" search once it has
+  // coordinates on file (see GET /shops's lat/lng filter) — there's no
+  // paid maps/geocoding API wired up, so the browser's own Geolocation
+  // API is the simplest way to capture them: the applicant is standing
+  // at (or near) the shop while filling this out.
+  function useMyLocation() {
+    if (!("geolocation" in navigator)) {
+      setLocationError("Your browser doesn't support location access — enter the address manually.");
+      return;
+    }
+    setLocating(true);
+    setLocationError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocating(false);
+      },
+      (err) => {
+        setLocationError(
+          err.code === err.PERMISSION_DENIED
+            ? "Location access was denied — allow it in your browser settings, then try again."
+            : "Couldn't get your location. Try again, or check your device's location settings."
+        );
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -203,10 +237,25 @@ function ApplyForm({
       setError("Add at least one verification document before applying.");
       return;
     }
+    if (!coords) {
+      setError("Capture your shop's location before applying — it's how customers nearby will find you.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await apiFetch("/shops", { method: "POST", body: JSON.stringify({ name, category, documents }) });
+      await apiFetch("/shops", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          category,
+          documents,
+          address_line1: addressLine1,
+          city,
+          latitude: coords.lat,
+          longitude: coords.lng,
+        }),
+      });
       onCreated();
     } catch (err) {
       setError((err as Error).message);
@@ -242,6 +291,44 @@ function ApplyForm({
           required
           className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+      </div>
+
+      <div className="border-t border-gray-100 pt-4 space-y-3">
+        <p className="text-sm font-medium text-gray-900">Shop location</p>
+        <p className="text-xs text-gray-500 -mt-1">
+          This is how customers nearby will find you — only shops within delivery range of a
+          customer show up in their search.
+        </p>
+        <input
+          placeholder="Shop address"
+          value={addressLine1}
+          onChange={(e) => setAddressLine1(e.target.value)}
+          required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          placeholder="City"
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={useMyLocation}
+            disabled={locating}
+            className="text-sm font-medium text-blue-600 border border-blue-200 rounded-md px-3 py-2 hover:bg-blue-50 disabled:opacity-50"
+          >
+            {locating ? "Locating…" : coords ? "Update location" : "Use my current location"}
+          </button>
+          {coords && (
+            <span className="text-xs text-emerald-600">
+              ✓ Location captured ({coords.lat.toFixed(4)}, {coords.lng.toFixed(4)})
+            </span>
+          )}
+        </div>
+        {locationError && <p className="text-xs text-red-500">{locationError}</p>}
       </div>
 
       <div className="border-t border-gray-100 pt-4">

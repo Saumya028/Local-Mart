@@ -11,6 +11,10 @@ export type Shop = {
   docs_status: "pending" | "submitted" | "verified";
   documents: ShopDocument[];
   rejection_reason: string | null;
+  address_line1: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type Product = {

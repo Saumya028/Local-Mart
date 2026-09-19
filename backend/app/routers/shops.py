@@ -1,43 +1,72 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
-from app.models import Profile, Shop
+from app.models import PlatformSettings, Profile, Shop
 from app.schemas.shop import ShopCreate, ShopOut
 
 router = APIRouter(prefix="/shops", tags=["shops"])
+
+EARTH_RADIUS_KM = 6371
+# Fallback if the platform_settings singleton row is somehow missing —
+# kept identical to that model's own default (see PlatformSettings) so
+# behavior doesn't change depending on whether the row happens to exist.
+DEFAULT_RADIUS_KM = 5.0
+
+
+def _distance_expr(lat: float, lng: float):
+    """
+    Great-circle distance (km) from (lat, lng) to each shop's coordinates,
+    via the standard haversine/spherical-law-of-cosines formula, computed
+    directly in SQL so filtering and sorting happen in Postgres rather
+    than pulling every shop into Python first. The clamp via
+    LEAST/GREATEST guards against the cosine sum drifting fractionally
+    outside [-1, 1] from floating-point rounding — acos() errors out
+    otherwise, most commonly for a shop essentially at the search point.
+    """
+    cos_angle = (
+        func.cos(func.radians(lat)) * func.cos(func.radians(Shop.latitude))
+        * func.cos(func.radians(Shop.longitude) - func.radians(lng))
+        + func.sin(func.radians(lat)) * func.sin(func.radians(Shop.latitude))
+    )
+    return EARTH_RADIUS_KM * func.acos(func.greatest(-1.0, func.least(1.0, cos_angle)))
 
 
 @router.get("", response_model=list[ShopOut])
 async def list_shops(
     category: str | None = Query(default=None),
     q: str | None = Query(default=None, description="Case-insensitive substring match on shop name"),
+    lat: float | None = Query(default=None, description="Customer's latitude — filters shops by radius_km"),
+    lng: float | None = Query(default=None, description="Customer's longitude — used together with lat"),
+    radius_km: float | None = Query(
+        default=None, gt=0, description="Defaults to the platform's max delivery radius setting"
+    ),
     limit: int = Query(default=50, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Backs the "Shops near you" section on the Landing page, and — with
-    `q`/`category` — the /stores browse-all page's search and category
-    filter.
+    `q`/`category`/`lat`+`lng` — the /stores browse-all page's search,
+    category filter, and "near me" distance filter.
 
     We only cache the fully-unfiltered call at the default limit — that's
-    the one every Landing page load hits identically. A `q`/`category`
-    filtered call, or a non-default `limit`, is rarer and more varied, so
-    it goes straight to Postgres; caching every possible combination
-    isn't worth the complexity at this stage.
+    the one every Landing page load hits identically. A `q`/`category`/
+    `lat`+`lng` filtered call, or a non-default `limit`, is rarer and more
+    varied, so it goes straight to Postgres; caching every possible
+    combination isn't worth the complexity at this stage.
     """
     # A shop must be BOTH is_active (currently open) AND approval_status
     # == "approved" (an admin has signed off on it) to show up in the
     # public catalog — a brand-new, still-pending application is invisible
     # here even though its is_active default is fine, exactly like a
     # rejected/deactivated shop is.
-    if category is None and q is None and limit == 50:
+    if category is None and q is None and lat is None and lng is None and limit == 50:
         async def load():
             result = await db.execute(
                 select(Shop)
@@ -49,6 +78,40 @@ async def list_shops(
             return [ShopOut.model_validate(s).model_dump(mode="json") for s in shops]
 
         return await cache_get_or_set("shops:list", ttl_seconds=60, loader=load)
+
+    # lat/lng travel together or not at all — a lone coordinate can't
+    # compute a distance, so treat it the same as neither being given
+    # rather than erroring on what's likely a frontend bug.
+    if lat is not None and lng is not None:
+        radius = radius_km
+        if radius is None:
+            settings_row = await db.get(PlatformSettings, 1)
+            radius = float(settings_row.max_delivery_radius_km) if settings_row else DEFAULT_RADIUS_KM
+
+        distance = _distance_expr(lat, lng)
+        stmt = (
+            select(Shop, distance.label("distance_km"))
+            .where(
+                Shop.is_active.is_(True),
+                Shop.approval_status == "approved",
+                Shop.latitude.isnot(None),
+                Shop.longitude.isnot(None),
+                distance <= radius,
+            )
+        )
+        if category is not None:
+            stmt = stmt.where(Shop.category == category)
+        if q:
+            stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
+        stmt = stmt.order_by(distance.asc()).limit(limit)
+
+        result = await db.execute(stmt)
+        out = []
+        for shop, distance_km in result.all():
+            item = ShopOut.model_validate(shop)
+            item.distance_km = round(distance_km, 2)
+            out.append(item)
+        return out
 
     stmt = select(Shop).where(Shop.is_active.is_(True), Shop.approval_status == "approved")
     if category is not None:
@@ -92,6 +155,10 @@ async def create_shop(
         approval_status="pending",
         docs_status="submitted",
         documents=[d.model_dump() for d in payload.documents],
+        address_line1=payload.address_line1,
+        city=payload.city,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
     )
     db.add(shop)
 
