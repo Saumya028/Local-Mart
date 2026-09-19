@@ -2,11 +2,10 @@ import json
 
 import razorpay
 from fastapi import APIRouter, Header, HTTPException, Request
-from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
-from app.models import Order, OrderItem, Payment, Product
+from app.core.payment_confirmation import mark_payment_captured, mark_payment_failed
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -28,6 +27,11 @@ async def razorpay_webhook(
     This opens its own database session rather than using the get_db
     dependency, since a webhook's lifecycle is Razorpay's, not a logged-in
     user's request.
+
+    This is the source-of-truth confirmation path, but not the only one —
+    see core/payment_confirmation.py's docstring for why POST
+    /orders/verify-payment also exists and calls the exact same
+    mark_payment_captured/mark_payment_failed helpers this does.
 
     Local dev: use the Razorpay CLI (`razorpay-cli listen`) or a tunnel
     (ngrok/Cloudflare Tunnel) pointed at localhost:8000/webhooks/razorpay,
@@ -60,37 +64,10 @@ async def razorpay_webhook(
         return {"received": True}
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Payment).where(Payment.provider_ref == provider_ref))
-        payments = result.scalars().all()
-
         if event_type == "payment.captured":
-            for payment in payments:
-                payment.status = "succeeded"
-                payment.method = payment_entity.get("method", payment.method)
-                await db.execute(
-                    update(Order).where(Order.id == payment.order_id).values(status="confirmed")
-                )
-
+            await mark_payment_captured(db, provider_ref, method=payment_entity.get("method"))
         elif event_type == "payment.failed":
-            for payment in payments:
-                payment.status = "failed"
-                await db.execute(
-                    update(Order).where(Order.id == payment.order_id).values(status="payment_failed")
-                )
-
-                # Release the stock reserved at checkout time — this
-                # order is never going to be fulfilled, so holding onto
-                # that stock would incorrectly block other customers from
-                # buying it.
-                items_result = await db.execute(
-                    select(OrderItem).where(OrderItem.order_id == payment.order_id)
-                )
-                for item in items_result.scalars().all():
-                    await db.execute(
-                        update(Product)
-                        .where(Product.id == item.product_id)
-                        .values(stock_qty=Product.stock_qty + item.quantity)
-                    )
+            await mark_payment_failed(db, provider_ref)
 
         await db.commit()
 

@@ -98,6 +98,36 @@ the API level, but the frontend's upload step will fail with a storage
 error before it ever gets that far — so run this before testing the
 "Apply to sell" flow.
 
+### Phone sign-in setup (required for the Login page's Phone tab to work)
+
+The Login page's Phone tab is genuinely wired to Supabase Auth
+(`supabase.auth.signInWithOtp({ phone })` /
+`supabase.auth.verifyOtp(...)` — see `app/login/page.tsx`), not a
+mock. But Supabase doesn't send SMS on its own; it needs an SMS
+provider configured first. Without this, the request succeeds at the
+API level and `otpSent` flips to true, but no code ever actually
+arrives on the phone.
+
+To enable it:
+
+1. In your Supabase project dashboard, go to **Authentication → Providers → Phone**.
+2. Toggle **Enable phone provider** on.
+3. Pick an SMS provider (Twilio is the most common) and fill in its
+   credentials — Account SID, Auth Token, and a Messaging Service SID
+   or "from" number, all from that provider's own dashboard. Supabase
+   doesn't include SMS sending itself; this is what actually pays for
+   and delivers the message.
+4. Save. Test with a real phone number — Twilio trial accounts can
+   usually only text numbers you've explicitly verified with them, so
+   if codes aren't arriving during testing, check that first before
+   assuming the integration is broken.
+
+If you don't want to set up an SMS provider right now, that's fine —
+everything else on the Login/Signup pages (email/password, Google
+removed per your request, forgot/reset password) works with zero
+extra setup. The Phone tab will just show whatever error Supabase
+returns until this is configured.
+
 ## Try it — selling is NOT self-service
 
 1. As a plain customer, notice **"Sell" doesn't appear in the header at all.**
@@ -126,6 +156,51 @@ error before it ever gets that far — so run this before testing the
 5. Switch to **Orders** — any order placed against your shop shows here with the buyer's email and a **Mark shipped/delivered/cancelled** action, depending on its current status.
 6. Switch to **Summary** — confirmed order count and total revenue.
 7. **To see this fully end to end**: place a real test order as a *different* logged-in account against your shop's product, complete payment, then come back to your dashboard's Orders tab and watch it appear.
+
+## Try the Landing page + store browsing
+
+1. Go to `/` — this is the only page that renders its OWN header/footer
+   (`components/home/MarketingHeader.tsx` /
+   `components/home/MarketingFooter.tsx`, discovery-focused nav) instead
+   of the site-wide `Header`/`Footer`; those two explicitly skip
+   rendering on `/` to avoid stacking two headers.
+2. Click any **Featured Store** card, or **See all stores** → `/store/[id]`
+   and `/stores`. Both are real pages backed by `GET /shops/{id}` and
+   `GET /shops` (now with a `q` search param) — they didn't exist before
+   this pass, even though the backend's own docstrings already referred
+   to `/store/[id]` as where its data was headed.
+3. Store/product images are deliberately category icon blocks, not
+   photos — there's no shop/product image upload feature built yet, and
+   a real photo would be either fake or a broken link. Testimonials on
+   the Landing page are static placeholder copy for the same honesty
+   reason: there's no review system yet to pull real quotes from.
+
+## Try the new Login/Signup pages
+
+1. Go to `/login`. Google sign-in was deliberately left out (per
+   request) — only Email and Phone tabs.
+2. **Email tab**: sign in with an existing account, or click **Sign up
+   free** to create one on `/signup` (collects a full name too — it
+   flows through to your profile automatically, see
+   `backend/app/core/security.py`'s `get_current_user`).
+3. **Forgot password?** on the Email tab goes to `/forgot-password` →
+   emails a real Supabase reset link → `/reset-password` lets you set a
+   new one. All three pages are live, not mocked.
+4. **Phone tab**: needs the SMS provider setup above first, or
+   `signInWithOtp` will error immediately with no code ever sent.
+5. **"Or sign in as Shop Owner / Admin"**: click one, then sign in
+   normally. You'll land on `/shop/dashboard` or `/admin` right after —
+   but only actually see something there if your account already has
+   that role (see "selling is NOT self-service" above). These buttons
+   are a navigation shortcut, not a way to grant yourself access.
+6. **Guest-only pages**: while already logged in, try navigating
+   directly to `/login`, `/signup`, or `/forgot-password` — each
+   redirects you straight back to `/` (see `lib/useGuestOnly.ts`). These
+   three pages only make sense to a logged-out visitor. `/reset-password`
+   is deliberately exempt from this — it's reached via a password-reset
+   email link, which itself creates a (recovery) session, so guarding it
+   the same way would bounce you away before you could ever set a new
+   password.
 
 ## Try the new hardening features (Phase 7)
 

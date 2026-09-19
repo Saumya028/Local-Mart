@@ -34,20 +34,39 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
-  // Initial load.
+  // Actively asks Razorpay what really happened to this payment, rather
+  // than just re-reading whatever's already in Postgres — see
+  // sync-payment-status's docstring on the backend for why this is what
+  // actually un-sticks an order that's been sitting at "pending" since
+  // before this existed, not only ones placed from now on.
+  async function sync() {
+    try {
+      const data = await apiFetch(`/orders/${params.id}/sync-payment-status`, { method: "POST" });
+      setOrder(data);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  // Initial load: reconcile with Razorpay right away rather than a plain
+  // read, so landing on this page (including an old bookmark/link to an
+  // order that got stuck before sync-payment-status existed) is itself
+  // enough to pick up a payment that already succeeded.
   useEffect(() => {
-    load();
+    sync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  // Poll every 4s ONLY while status is still "pending" — payment
-  // confirmation happens asynchronously via the Stripe webhook, so this
-  // page has no other way to find out it landed besides checking again.
-  // Each successful load schedules the next check; once status leaves
-  // "pending", nothing schedules another one and polling stops itself.
+  // Poll every 4s ONLY while status is still "pending", re-syncing with
+  // Razorpay on each check (not just re-reading the DB) — payment
+  // confirmation can arrive via webhook, via the checkout page's own
+  // verify call, or be picked up right here. Each successful load
+  // schedules the next check; once status leaves "pending", nothing
+  // schedules another one and polling stops itself.
   useEffect(() => {
     if (!order || order.status !== "pending") return;
-    const timeoutId = setTimeout(load, 4000);
+    const timeoutId = setTimeout(sync, 4000);
     return () => clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order]);

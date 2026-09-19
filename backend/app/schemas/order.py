@@ -74,11 +74,26 @@ class CheckoutResponse(BaseModel):
     total_amount: Decimal
 
 
+class VerifyPaymentRequest(BaseModel):
+    """
+    What Razorpay Checkout's own `handler` callback hands back to the
+    browser the instant a payment succeeds — see checkout/page.tsx.
+    `razorpay_signature` is HMAC-SHA256(order_id + "|" + payment_id,
+    our Razorpay key secret), so only Razorpay itself could have produced
+    it; routers/orders.py's verify_payment re-derives and checks it
+    server-side rather than trusting these three fields at face value.
+    """
+
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
 class DashboardOrderOut(OrderOut):
     """The seller-facing view of an order — adds who bought it, which the
     customer-facing OrderOut has no reason to expose to anyone but the
     buyer themselves."""
 
-    buyer_email: str
+    buyer_email: str | None
     buyer_name: str | None = None
     item_count: int = 0

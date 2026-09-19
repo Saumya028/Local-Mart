@@ -49,7 +49,7 @@ export default function CheckoutPage() {
   // the page loads and reused across retries of that SAME attempt — this
   // is what lets the backend safely dedupe a retried request instead of
   // creating a second set of orders and charging twice.
-  const idempotencyKey = useMemo(generateIdempotencyKey, []);
+  const idempotencyKey = useMemo(() => generateIdempotencyKey(), []);
 
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -117,9 +117,10 @@ export default function CheckoutPage() {
   }
 
   // Once payment either succeeds or the popup is dismissed, we send the
-  // shopper straight to order tracking — actual confirmation happens
-  // asynchronously via the Razorpay webhook, and that page already polls
-  // for it (see app/orders/[id]/page.tsx).
+  // shopper straight to order tracking — confirmation itself happens via
+  // POST /orders/verify-payment (called from the Razorpay handler below)
+  // and/or the webhook, and that page already polls for it (see
+  // app/orders/[id]/page.tsx).
   if (checkoutResult) {
     return (
       <main className="max-w-md mx-auto px-6 py-10 text-center space-y-3">
@@ -216,13 +217,18 @@ export default function CheckoutPage() {
   );
 }
 
-// Opens Razorpay's own hosted payment popup. We don't confirm payment
-// success from the popup's callback here — Razorpay's client-side
-// `handler` result isn't itself trustworthy (it's just what the browser
-// says happened), so the actual order confirmation only ever comes from
-// the signed server-to-server webhook in routers/webhooks.py. This just
-// gives the shopper immediate visual feedback and lets them retry if they
-// close the popup or the payment fails.
+// Opens Razorpay's own hosted payment popup. Razorpay's client-side
+// `handler` result isn't trustworthy on its own (it's just what the
+// browser says happened) — but it does hand back a signed proof
+// (razorpay_payment_id/order_id/signature) that only Razorpay itself
+// could have produced, so we send that straight to POST
+// /orders/verify-payment, which re-derives and checks that signature
+// server-side before confirming anything. That's what actually flips
+// the order to "confirmed" here — not this callback by itself. The
+// signed Razorpay webhook (routers/webhooks.py) still runs too and can
+// confirm the same order independently; either one landing first is
+// fine (see core/payment_confirmation.py's docstring on the backend for
+// why both exist).
 async function openRazorpayCheckout(
   data: CheckoutResponse,
   setError: (msg: string | null) => void
@@ -245,11 +251,29 @@ async function openRazorpayCheckout(
     description: `Order${data.orders.length > 1 ? "s" : ""} #${data.orders
       .map((o) => o.id.slice(0, 8))
       .join(", ")}`,
-    handler: function () {
-      // Payment succeeded from the browser's point of view. The order
-      // tracking page (already linked below) polls the backend and will
-      // flip to "Confirmed" once the webhook has actually landed.
-      setError(null);
+    handler: async function (response: {
+      razorpay_order_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }) {
+      try {
+        await apiFetch("/orders/verify-payment", {
+          method: "POST",
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          }),
+        });
+        setError(null);
+      } catch {
+        // Verification itself failed to go through (e.g. a network
+        // blip right after payment) — not a sign the payment failed.
+        // The webhook is still in flight independently and the order
+        // tracking page keeps polling, so this stays reassuring rather
+        // than alarming.
+        setError("Payment received — confirming your order now. This can take a moment.");
+      }
     },
     modal: {
       ondismiss: function () {

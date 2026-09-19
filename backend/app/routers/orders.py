@@ -10,11 +10,18 @@ from app.core import cart as cart_store
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.idempotency import idempotent
+from app.core.payment_confirmation import mark_payment_captured, mark_payment_failed
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
 from app.models import Address, Order, OrderItem, Payment, Product, Profile, Shop
-from app.schemas.order import CheckoutRequest, CheckoutResponse, OrderDetailOut, OrderOut
+from app.schemas.order import (
+    CheckoutRequest,
+    CheckoutResponse,
+    OrderDetailOut,
+    OrderOut,
+    VerifyPaymentRequest,
+)
 from app.schemas.shop import ShopOut
 
 router = APIRouter(tags=["orders"])
@@ -62,7 +69,9 @@ async def checkout(
     decremented for nothing.
 
     This endpoint only ever creates a "pending" order — actual payment
-    confirmation happens asynchronously in the Razorpay webhook.
+    confirmation happens via the Razorpay webhook and/or POST
+    /orders/verify-payment (see that endpoint and
+    core/payment_confirmation.py for why there are two paths).
     """
 
     async def do_checkout() -> dict:
@@ -179,6 +188,59 @@ async def checkout(
     return await idempotent(idempotency_redis_key, ttl_seconds=86400, action=do_checkout)
 
 
+@router.post("/orders/verify-payment")
+async def verify_payment(
+    payload: VerifyPaymentRequest,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Called right after Razorpay's Checkout popup reports success (see
+    checkout/page.tsx's `handler`) — a reliable alternative to waiting on
+    the webhook alone. See core/payment_confirmation.py's module
+    docstring for the full reasoning; short version: the webhook has to
+    be registered against wherever this backend is currently reachable,
+    and if that's ever missed, stale, or blocked, a real successful
+    payment sits at "Awaiting payment" forever with nothing to ever flip
+    it. This path doesn't trust the browser's word that payment
+    succeeded — it re-derives the same HMAC signature Razorpay's own
+    docs recommend verifying, using our key secret, which only Razorpay
+    could have produced correctly in the first place.
+    """
+    try:
+        razorpay_client.utility.verify_payment_signature(
+            {
+                "razorpay_order_id": payload.razorpay_order_id,
+                "razorpay_payment_id": payload.razorpay_payment_id,
+                "razorpay_signature": payload.razorpay_signature,
+            }
+        )
+    except razorpay.errors.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Payment signature could not be verified")
+
+    # A valid signature proves the payment is real, not that THIS user
+    # is the one who made it — confirm the caller actually owns (at
+    # least one of) the order(s) this Razorpay Order paid for before
+    # touching anything, the same way get_order below scopes lookups to
+    # `Order.user_id == user.id`.
+    owns_order = await db.execute(
+        select(Payment.id)
+        .join(Order, Order.id == Payment.order_id)
+        .where(Payment.provider_ref == payload.razorpay_order_id, Order.user_id == user.id)
+        .limit(1)
+    )
+    if owns_order.first() is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Safe to call even if the webhook already landed first (or lands a
+    # moment later) — see mark_payment_captured's docstring on why
+    # marking an already-"succeeded" payment succeeded again is a no-op.
+    await mark_payment_captured(db, payload.razorpay_order_id)
+    await db.commit()
+
+    return {"status": "confirmed"}
+
+
 @router.get("/orders", response_model=list[OrderOut])
 async def list_orders(
     user: Profile = Depends(get_current_user),
@@ -218,27 +280,19 @@ async def list_orders(
     ]
 
 
-@router.get("/orders/{order_id}", response_model=OrderDetailOut)
-async def get_order(
-    order_id: str,
-    user: Profile = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Full order detail for the tracking page: status, shop, and every line
-    item. The Checkout page also polls this right after payment, since
-    confirmation happens asynchronously via webhook — this is how the
-    frontend finds out the webhook actually landed.
-    """
+async def _load_owned_order(db: AsyncSession, order_id: str, user: Profile) -> Order:
+    """Shared by get_order and sync_payment_status below — scoped to the
+    requesting user so a shop owner or another customer can never look up
+    someone else's order by guessing IDs."""
     oid = parse_uuid_or_404(order_id, "Order")
     result = await db.execute(select(Order).where(Order.id == oid))
     order = result.scalar_one_or_none()
-
-    # Scoped to the requesting user — a shop owner or another customer
-    # must never be able to look up someone else's order by guessing IDs.
     if order is None or order.user_id != user.id:
         raise HTTPException(status_code=404, detail="Order not found")
+    return order
 
+
+async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
     shop_result = await db.execute(select(Shop).where(Shop.id == order.shop_id))
     shop = shop_result.scalar_one_or_none()
 
@@ -264,3 +318,85 @@ async def get_order(
     data["item_count"] = sum(i["quantity"] for i in items)
     data["items"] = items
     return data
+
+
+@router.get("/orders/{order_id}", response_model=OrderDetailOut)
+async def get_order(
+    order_id: str,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Full order detail for the tracking page: status, shop, and every line
+    item. The Checkout page also polls this right after payment — see
+    sync_payment_status below for how a "pending" order actually gets a
+    chance to become "confirmed" between polls, since this endpoint by
+    itself only reads whatever's already in Postgres.
+    """
+    order = await _load_owned_order(db, order_id, user)
+    return await _build_order_detail(db, order)
+
+
+@router.post("/orders/{order_id}/sync-payment-status", response_model=OrderDetailOut)
+async def sync_payment_status(
+    order_id: str,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Asks Razorpay directly, right now, what actually happened to this
+    order's payment — a third, on-demand path alongside the webhook and
+    POST /orders/verify-payment (see core/payment_confirmation.py's
+    docstring), and the one that can fix an order that's ALREADY stuck:
+    the other two only ever fire once, at the moment a payment succeeds,
+    so an order that missed both (say, the webhook was never registered
+    for wherever this backend happened to be reachable at the time, AND
+    the browser tab was closed before the verify-payment call went out)
+    has nothing left to un-stick it — nothing else asks Razorpay again
+    later. This does, using Razorpay's `GET /orders/{id}/payments` API
+    with our own server-side key (no signature from the browser needed,
+    since we're asking Razorpay directly rather than trusting anything
+    the client hands us).
+
+    The order tracking page calls this on every poll while status is
+    still "pending" (see app/orders/[id]/page.tsx) — so simply opening
+    that page again is what reconciles an order that got stuck before
+    this endpoint existed, not just new ones going forward.
+    """
+    order = await _load_owned_order(db, order_id, user)
+
+    if order.status != "pending":
+        # Nothing to reconcile — either already resolved, or in some
+        # other terminal-ish state (e.g. shipped) this shouldn't touch.
+        return await _build_order_detail(db, order)
+
+    payment_result = await db.execute(select(Payment).where(Payment.order_id == order.id))
+    payment = payment_result.scalar_one_or_none()
+    if payment is None:
+        return await _build_order_detail(db, order)
+
+    try:
+        remote = razorpay_client.order.payments(payment.provider_ref)
+    except razorpay.errors.BadRequestError:
+        # Razorpay itself doesn't recognize this order_id (shouldn't
+        # normally happen) — nothing to reconcile against, so just
+        # report the order as it stands rather than failing the whole
+        # page load over it.
+        return await _build_order_detail(db, order)
+
+    remote_payments = remote.get("items", [])
+    captured = next((p for p in remote_payments if p.get("status") == "captured"), None)
+    failed = next((p for p in remote_payments if p.get("status") == "failed"), None)
+
+    if captured is not None:
+        await mark_payment_captured(db, payment.provider_ref, method=captured.get("method"))
+        await db.commit()
+        await db.refresh(order)
+    elif failed is not None and not any(p.get("status") == "captured" for p in remote_payments):
+        await mark_payment_failed(db, payment.provider_ref)
+        await db.commit()
+        await db.refresh(order)
+    # Else: still genuinely pending on Razorpay's side too (e.g. the
+    # shopper hasn't finished the popup yet) — leave it as is.
+
+    return await _build_order_detail(db, order)
