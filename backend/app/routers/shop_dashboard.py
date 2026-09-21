@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
 from app.core.db import get_db
 from app.core.order_status import ALLOWED_TRANSITIONS, RECOGNIZED_STATUSES
@@ -159,6 +160,11 @@ async def update_my_shop(
         if shop.approval_status == "rejected":
             shop.approval_status = "pending"
 
+    if "attributes" in updates or "category" in updates:
+        merged_category = updates.get("category", shop.category)
+        merged_attributes = updates.get("attributes", shop.attributes)
+        await validate_attributes(db, "shop", merged_category, merged_attributes)
+
     for key, value in updates.items():
         setattr(shop, key, value)
 
@@ -184,6 +190,10 @@ async def create_product(
     if not _user_owns_shop(shop, user):
         raise HTTPException(status_code=403, detail="You don't own this shop")
     _require_approved_shop(shop)
+    # Category-specific required fields (e.g. Pharmacy's
+    # prescription_required) live in AttributeSchema, defined by an
+    # admin — see core/attribute_validation.py.
+    await validate_attributes(db, "product", payload.category, payload.attributes)
 
     product = Product(id=uuid.uuid4(), **payload.model_dump())
     db.add(product)
@@ -237,7 +247,18 @@ async def update_product(
 ):
     product = await _get_owned_product_or_403(product_id, user, db)
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    # Validate against the resulting state, not just what changed — a
+    # partial update ("just changing the price") still needs to satisfy
+    # the CURRENT category's required fields, in case the category
+    # itself changed in this same request or a schema was tightened
+    # since the product was created.
+    if "attributes" in updates or "category" in updates:
+        merged_category = updates.get("category", product.category)
+        merged_attributes = updates.get("attributes", product.attributes)
+        await validate_attributes(db, "product", merged_category, merged_attributes)
+
+    for key, value in updates.items():
         setattr(product, key, value)
 
     await db.commit()

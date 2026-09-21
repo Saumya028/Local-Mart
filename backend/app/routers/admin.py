@@ -10,8 +10,9 @@ from app.core.db import get_db
 from app.core.order_status import RECOGNIZED_STATUSES as RECOGNIZED_ORDER_STATUSES
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import Address, AuditLog, Order, PlatformSettings, Product, Profile, Shop
+from app.models import Address, AttributeSchema, AuditLog, Order, PlatformSettings, Product, Profile, Shop
 from app.schemas.admin import (
+    VALID_APPROVAL_STATUSES,
     AdminShopOut,
     AdminUserOut,
     AuditLogOut,
@@ -26,8 +27,8 @@ from app.schemas.admin import (
     ShopStatusUpdate,
     UsersSummary,
     UserStatusUpdate,
-    VALID_APPROVAL_STATUSES,
 )
+from app.schemas.attribute_schema import AttributeSchemaOut, AttributeSchemaUpsert
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -799,3 +800,98 @@ async def list_audit_log(
         }
         for entry, admin_email in result.all()
     ]
+
+
+@router.get("/attribute-schemas", response_model=list[AttributeSchemaOut])
+async def list_attribute_schemas(
+    kind: str | None = Query(default=None, description="Filter to 'product' or 'shop'"),
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Backs the Admin Panel's Attributes tab — the screen that lets an
+    admin define what extra fields each category asks for, WITHOUT a
+    code deploy (see AttributeSchema's docstring for why this exists at
+    all). Returns every category that currently has a schema; a
+    category with none yet just isn't in this list until an admin
+    creates one via the PUT below.
+    """
+    stmt = select(AttributeSchema)
+    if kind is not None:
+        stmt = stmt.where(AttributeSchema.kind == kind)
+    result = await db.execute(stmt.order_by(AttributeSchema.kind, AttributeSchema.category))
+    return result.scalars().all()
+
+
+@router.put("/attribute-schemas/{kind}/{category}", response_model=AttributeSchemaOut)
+async def upsert_attribute_schema(
+    kind: str,
+    category: str,
+    payload: AttributeSchemaUpsert,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Create-or-replace, keyed by (kind, category) — there's no separate
+    POST because a category only ever has one schema per kind, so
+    "define it" and "redefine it" are the same operation. `kind` must be
+    "product" or "shop"; anything else 422s rather than silently
+    creating a schema nothing will ever read (no form fetches a kind
+    other than those two — see routers/attribute_schemas.py).
+    """
+    if kind not in ("product", "shop"):
+        raise HTTPException(status_code=422, detail="kind must be 'product' or 'shop'")
+
+    result = await db.execute(
+        select(AttributeSchema).where(AttributeSchema.kind == kind, AttributeSchema.category == category)
+    )
+    schema = result.scalar_one_or_none()
+    fields_dump = [f.model_dump() for f in payload.fields]
+
+    if schema is None:
+        schema = AttributeSchema(id=uuid.uuid4(), kind=kind, category=category, fields=fields_dump)
+        db.add(schema)
+    else:
+        schema.fields = fields_dump
+
+    _record_audit(
+        db, admin, action="upsert_attribute_schema", target_type="attribute_schema", target_id=None,
+        details={"kind": kind, "category": category, "field_count": len(fields_dump)},
+    )
+    await db.commit()
+    await db.refresh(schema)
+
+    # Both the public schema-fetch endpoint (300s TTL) and any in-flight
+    # product/shop forms would otherwise keep showing the old field list
+    # for up to 5 minutes after an admin saves a change here.
+    await invalidate(f"attribute-schema:{kind}:{category}")
+    return schema
+
+
+@router.delete("/attribute-schemas/{kind}/{category}")
+async def delete_attribute_schema(
+    kind: str,
+    category: str,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Removing a schema doesn't touch existing products/shops that
+    already saved values under it — their `attributes`/`attributes`
+    JSONB is left exactly as-is; the category's form just stops asking
+    for those fields going forward (see validate_attributes' docstring
+    for the same "narrowing a schema is never retroactive" reasoning)."""
+    result = await db.execute(
+        select(AttributeSchema).where(AttributeSchema.kind == kind, AttributeSchema.category == category)
+    )
+    schema = result.scalar_one_or_none()
+    if schema is None:
+        raise HTTPException(status_code=404, detail="No schema defined for this kind/category")
+
+    await db.delete(schema)
+    _record_audit(
+        db, admin, action="delete_attribute_schema", target_type="attribute_schema", target_id=None,
+        details={"kind": kind, "category": category},
+    )
+    await db.commit()
+    await invalidate(f"attribute-schema:{kind}:{category}")
+    return {"status": "deleted"}

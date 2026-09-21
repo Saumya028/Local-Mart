@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
+import { useAttributeSchema } from "@/lib/attributeSchema";
+import DynamicAttributeFields from "@/components/DynamicAttributeFields";
 import { Product, formatINR } from "./types";
 
 function stockBadge(p: Product) {
@@ -228,8 +230,17 @@ function ProductForm({
   const [category, setCategory] = useState(product?.category ?? "");
   const [price, setPrice] = useState(product?.price ?? "");
   const [stock, setStock] = useState(String(product?.stock_qty ?? 0));
+  const [attributes, setAttributes] = useState<Record<string, string | number | boolean>>(
+    product?.attributes ?? {}
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const { fields: attributeFields } = useAttributeSchema("product", category);
+
+  function handleAttributeChange(key: string, value: string | number | boolean) {
+    setAttributes((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -244,6 +255,7 @@ function ProductForm({
             category,
             price: Number(price),
             stock_qty: Number(stock),
+            attributes,
           }),
         });
       } else {
@@ -255,6 +267,7 @@ function ProductForm({
             category,
             price: Number(price),
             stock_qty: Number(stock),
+            attributes,
           }),
         });
       }
@@ -301,6 +314,7 @@ function ProductForm({
           className="border border-gray-200 rounded-md px-3 py-2 text-sm bg-white"
         />
       </div>
+      <DynamicAttributeFields fields={attributeFields} values={attributes} onChange={handleAttributeChange} />
       {error && <p className="text-sm text-red-500">{error}</p>}
       <div className="flex gap-2">
         <button

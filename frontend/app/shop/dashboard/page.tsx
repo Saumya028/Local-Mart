@@ -16,6 +16,8 @@ import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
 import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
 import { UploadedDocument } from "@/lib/documentUpload";
+import { useAttributeSchema } from "@/lib/attributeSchema";
+import DynamicAttributeFields from "@/components/DynamicAttributeFields";
 
 const TAB_TITLES: Record<TabKey, string> = {
   dashboard: "Dashboard",
@@ -199,8 +201,15 @@ function ApplyForm({
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
+  const [attributes, setAttributes] = useState<Record<string, string | number | boolean>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { fields: attributeFields } = useAttributeSchema("shop", category);
+
+  function handleAttributeChange(key: string, value: string | number | boolean) {
+    setAttributes((prev) => ({ ...prev, [key]: value }));
+  }
 
   // Customers can only find this shop in "near me" search once it has
   // coordinates on file (see GET /shops's lat/lng filter) — there's no
@@ -254,6 +263,7 @@ function ApplyForm({
           city,
           latitude: coords.lat,
           longitude: coords.lng,
+          attributes,
         }),
       });
       onCreated();
@@ -330,6 +340,12 @@ function ApplyForm({
         </div>
         {locationError && <p className="text-xs text-red-500">{locationError}</p>}
       </div>
+
+      {attributeFields.length > 0 && (
+        <div className="border-t border-gray-100 pt-4">
+          <DynamicAttributeFields fields={attributeFields} values={attributes} onChange={handleAttributeChange} />
+        </div>
+      )}
 
       <div className="border-t border-gray-100 pt-4">
         <p className="text-sm font-medium text-gray-900 mb-2">Verification documents</p>

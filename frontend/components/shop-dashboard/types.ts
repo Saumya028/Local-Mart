@@ -25,6 +25,7 @@ export type Product = {
   stock_qty: number;
   is_active: boolean;
   category: string;
+  attributes: Record<string, string | number | boolean>;
 };
 
 export type DashboardOrder = {

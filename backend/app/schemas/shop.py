@@ -39,6 +39,12 @@ class ShopCreate(BaseModel):
     city: str
     latitude: float
     longitude: float
+    # Category-specific fields defined by an admin (e.g. a pharmacy's
+    # drug license number) — see Shop.attributes and
+    # core/attribute_validation.py. Validated in routers/shops.py's
+    # create_shop against AttributeSchema(kind="shop") for the chosen
+    # category; {} is fine for a category with no schema defined.
+    attributes: dict = {}
 
     @field_validator("documents")
     @classmethod
@@ -73,6 +79,9 @@ class ShopUpdate(BaseModel):
     city: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # Category-specific fields (e.g. a pharmacy's drug license number) —
+    # see Shop.attributes and core/attribute_validation.py.
+    attributes: dict | None = None
     # Lets an owner resubmit documents after a rejection or a
     # "Request Docs" admin action, via the SAME endpoint
     # (PUT /dashboard/shops/{id}) rather than a separate one — see that
@@ -141,3 +150,4 @@ class DashboardShopOut(ShopOut):
     docs_status: str
     documents: list[ShopDocument]
     rejection_reason: str | None
+    attributes: dict

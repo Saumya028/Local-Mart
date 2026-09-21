@@ -1,6 +1,6 @@
 "use client";
 
-export type AdminTabKey = "dashboard" | "shops" | "users" | "reports" | "settings";
+export type AdminTabKey = "dashboard" | "shops" | "users" | "attributes" | "reports" | "settings";
 
 const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
   {
@@ -36,6 +36,17 @@ const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
         <path d="M2.5 16.5c0-2.6 2.1-4.3 4.7-4.3s4.7 1.7 4.7 4.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         <circle cx="14" cy="6.5" r="2" stroke="currentColor" strokeWidth="1.4" />
         <path d="M12.8 12.4c2 .2 3.7 1.8 3.7 4.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "attributes",
+    label: "Attributes",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <rect x="2.5" y="3.5" width="15" height="3.4" rx="1" stroke="currentColor" strokeWidth="1.6" />
+        <rect x="2.5" y="8.6" width="15" height="3.4" rx="1" stroke="currentColor" strokeWidth="1.6" />
+        <rect x="2.5" y="13.7" width="9" height="3.4" rx="1" stroke="currentColor" strokeWidth="1.6" />
       </svg>
     ),
   },

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.attribute_validation import validate_attributes
 from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
 from app.core.security import get_current_user
@@ -140,6 +141,10 @@ async def create_shop(
     gates. An existing shop_owner hitting this again just adds another
     shop under the same account; an admin can do the same.
     """
+    # Category-specific required fields (e.g. Pharmacy's drug license
+    # number) live in AttributeSchema(kind="shop"), defined by an admin.
+    await validate_attributes(db, "shop", payload.category, payload.attributes)
+
     # New shops start "pending"/unverified and closed — they only become
     # visible on the storefront once an admin approves them from the
     # Manage Shops queue (see routers/admin.py's approve_shop). docs_status
@@ -159,6 +164,7 @@ async def create_shop(
         city=payload.city,
         latitude=payload.latitude,
         longitude=payload.longitude,
+        attributes=payload.attributes,
     )
     db.add(shop)
 

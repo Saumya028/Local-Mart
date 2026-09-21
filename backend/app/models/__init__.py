@@ -1,4 +1,5 @@
 from app.models.address import Address
+from app.models.attribute_schema import AttributeSchema
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.order import Order
@@ -25,4 +26,5 @@ __all__ = [
     "AuditLog",
     "PlatformSettings",
     "WishlistItem",
+    "AttributeSchema",
 ]

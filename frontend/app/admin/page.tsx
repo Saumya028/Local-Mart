@@ -7,6 +7,7 @@ import { Topbar } from "@/components/admin/Topbar";
 import { DashboardTab } from "@/components/admin/DashboardTab";
 import { ShopsTab } from "@/components/admin/ShopsTab";
 import { UsersTab } from "@/components/admin/UsersTab";
+import { AttributesTab } from "@/components/admin/AttributesTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
 
@@ -14,6 +15,7 @@ const TAB_TITLES: Record<AdminTabKey, string> = {
   dashboard: "Dashboard",
   shops: "Shops",
   users: "Users",
+  attributes: "Attributes",
   reports: "Reports",
   settings: "Settings",
 };
@@ -73,6 +75,7 @@ export default function AdminPanelPage() {
           {tab === "dashboard" && <DashboardTab onGoToShops={() => setTab("shops")} />}
           {tab === "shops" && <ShopsTab onPendingCountChange={setPendingShopsCount} />}
           {tab === "users" && <UsersTab selfId={profile?.id ?? null} />}
+          {tab === "attributes" && <AttributesTab />}
           {tab === "reports" && <ReportsTab />}
           {tab === "settings" && <SettingsTab />}
         </div>

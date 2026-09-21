@@ -46,6 +46,13 @@ class Shop(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Category-specific shop details (e.g. a pharmacy's drug license
+    # number) — the field list for the current `category` comes from
+    # AttributeSchema (kind="shop"), rendered dynamically on the "Apply
+    # to sell" form. See ShopCreate/ShopUpdate for the same validation
+    # pattern used on Product.attributes.
+    attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+
     rating: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     # Admin can deactivate a shop (Phase 6) without deleting its data.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

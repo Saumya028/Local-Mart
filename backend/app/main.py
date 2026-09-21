@@ -22,6 +22,7 @@ init_sentry()
 from app.routers import (  # noqa: E402
     addresses,
     admin,
+    attribute_schemas,
     auth,
     cart,
     categories,
@@ -143,6 +144,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(auth.router)
 app.include_router(categories.router)
 app.include_router(shops.router)
+app.include_router(attribute_schemas.router)
 app.include_router(products.router)
 app.include_router(cart.router)
 app.include_router(addresses.router)
