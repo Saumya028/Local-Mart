@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { useAttributeSchema } from "@/lib/attributeSchema";
 import DynamicAttributeFields from "@/components/DynamicAttributeFields";
+import { ImageUploader } from "@/components/ImageUploader";
 import { Product, formatINR } from "./types";
 
 function stockBadge(p: Product) {
@@ -13,7 +14,7 @@ function stockBadge(p: Product) {
   return { label: "Active", className: "bg-emerald-100 text-emerald-700" };
 }
 
-export function ProductsTab({ shopId }: { shopId: string }) {
+export function ProductsTab({ shopId, userId }: { shopId: string; userId: string }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -82,6 +83,8 @@ export function ProductsTab({ shopId }: { shopId: string }) {
       {showForm && !editingId && (
         <ProductForm
           shopId={shopId}
+          userId={userId}
+          existingProducts={products}
           onSaved={() => {
             setShowForm(false);
             load();
@@ -115,7 +118,9 @@ export function ProductsTab({ shopId }: { shopId: string }) {
                       <td colSpan={6} className="px-5 py-3">
                         <ProductForm
                           shopId={shopId}
+                          userId={userId}
                           product={p}
+                          existingProducts={products}
                           onSaved={() => {
                             setEditingId(null);
                             load();
@@ -164,10 +169,24 @@ function ProductRow({
   onStockChange: (qty: number) => void;
 }) {
   const badge = stockBadge(product);
+  const variantLabel = Object.entries(product.variant_attributes || {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(", ");
   return (
     <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40">
       <td className="px-5 py-3">
-        <p className="font-medium text-gray-800">{product.name}</p>
+        <div className="flex items-center gap-2.5">
+          {product.images?.[0] ? (
+            // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
+            <img src={product.images[0]} alt="" className="w-9 h-9 rounded-md object-cover border border-gray-100 shrink-0" />
+          ) : (
+            <div className="w-9 h-9 rounded-md bg-gray-50 border border-gray-100 shrink-0" />
+          )}
+          <div>
+            <p className="font-medium text-gray-800">{product.name}</p>
+            {variantLabel && <p className="text-xs text-gray-400">{variantLabel}</p>}
+          </div>
+        </div>
       </td>
       <td className="px-5 py-3 text-gray-500">{product.category}</td>
       <td className="px-5 py-3 font-medium text-gray-800">{formatINR(product.price)}</td>
@@ -217,12 +236,19 @@ function ProductRow({
 
 function ProductForm({
   shopId,
+  userId,
   product,
+  existingProducts,
   onSaved,
   onCancel,
 }: {
   shopId: string;
+  userId: string;
   product?: Product;
+  /** Shop's other products, offered as "make this a variant of…" options.
+   * Excludes the product currently being edited (a product can't be its
+   * own variant sibling). */
+  existingProducts: Product[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -230,13 +256,24 @@ function ProductForm({
   const [category, setCategory] = useState(product?.category ?? "");
   const [price, setPrice] = useState(product?.price ?? "");
   const [stock, setStock] = useState(String(product?.stock_qty ?? 0));
+  const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [attributes, setAttributes] = useState<Record<string, string | number | boolean>>(
     product?.attributes ?? {}
   );
+  const [variantOfId, setVariantOfId] = useState("");
+  const [variantKey, setVariantKey] = useState(Object.keys(product?.variant_attributes ?? {})[0] ?? "");
+  const [variantValue, setVariantValue] = useState(Object.values(product?.variant_attributes ?? {})[0] ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const { fields: attributeFields } = useAttributeSchema("product", category);
+
+  // Only offered when creating a NEW product — an already-saved product
+  // either already has a variant_group_id (shown read-only below) or is
+  // standalone; grouping/regrouping an existing product isn't supported
+  // from this form to keep the mental model simple (one clear way to
+  // start a variant family: pick the sibling while creating the new one).
+  const variantCandidates = existingProducts.filter((p) => p.id !== product?.id);
 
   function handleAttributeChange(key: string, value: string | number | boolean) {
     setAttributes((prev) => ({ ...prev, [key]: value }));
@@ -256,6 +293,11 @@ function ProductForm({
             price: Number(price),
             stock_qty: Number(stock),
             attributes,
+            images,
+            // Only sent if this product is ALREADY part of a variant
+            // group (variantKey has a value in that case) — updating the
+            // differentiator on an existing variant, not creating one.
+            ...(product.variant_group_id ? { variant_attributes: { [variantKey]: variantValue } } : {}),
           }),
         });
       } else {
@@ -268,6 +310,9 @@ function ProductForm({
             price: Number(price),
             stock_qty: Number(stock),
             attributes,
+            images,
+            variant_of_product_id: variantOfId || null,
+            variant_attributes: variantOfId ? { [variantKey]: variantValue } : {},
           }),
         });
       }
@@ -314,7 +359,76 @@ function ProductForm({
           className="border border-gray-200 rounded-md px-3 py-2 text-sm bg-white"
         />
       </div>
+
+      <div>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">Photos</p>
+        <ImageUploader userId={userId} images={images} onChange={setImages} />
+      </div>
+
       <DynamicAttributeFields fields={attributeFields} values={attributes} onChange={handleAttributeChange} />
+
+      <div className="space-y-2 border-t border-gray-200 pt-3">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Variant</p>
+        {product ? (
+          product.variant_group_id ? (
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="e.g. Color"
+                value={variantKey}
+                onChange={(e) => setVariantKey(e.target.value)}
+                className="w-32 border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+              />
+              <input
+                placeholder="e.g. Black"
+                value={variantValue}
+                onChange={(e) => setVariantValue(e.target.value)}
+                className="flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">
+              This product isn&apos;t part of a variant group. To create one, add a NEW product below and set
+              &quot;variant of&quot; to this one.
+            </p>
+          )
+        ) : variantCandidates.length === 0 ? (
+          <p className="text-xs text-gray-400">Add another product first to be able to group them as variants.</p>
+        ) : (
+          <>
+            <select
+              value={variantOfId}
+              onChange={(e) => setVariantOfId(e.target.value)}
+              className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+            >
+              <option value="">Standalone product (not a variant)</option>
+              {variantCandidates.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Variant of: {p.name}
+                </option>
+              ))}
+            </select>
+            {variantOfId && (
+              <div className="flex items-center gap-2">
+                <input
+                  placeholder="e.g. Color"
+                  value={variantKey}
+                  onChange={(e) => setVariantKey(e.target.value)}
+                  required
+                  className="w-32 border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                />
+                <input
+                  placeholder="e.g. Black"
+                  value={variantValue}
+                  onChange={(e) => setVariantValue(e.target.value)}
+                  required
+                  className="flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {error && <p className="text-sm text-red-500">{error}</p>}
       <div className="flex gap-2">
         <button

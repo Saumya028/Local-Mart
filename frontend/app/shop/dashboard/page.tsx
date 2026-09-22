@@ -175,7 +175,7 @@ export default function ShopDashboardPage() {
             <DashboardTab shopId={selectedShopId} onGoToOrders={() => setTab("orders")} />
           )}
           {selectedShopId && tab === "orders" && <OrdersTab shopId={selectedShopId} />}
-          {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
           {selectedShopId && tab === "analytics" && <AnalyticsTab shopId={selectedShopId} />}
         </div>

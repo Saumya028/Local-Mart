@@ -4,7 +4,7 @@ import WishlistButton from "@/components/WishlistButton";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 
 type Shop = { id: string; name: string; category: string; rating: number; is_active: boolean; created_at: string };
-type Product = { id: string; name: string; price: string; category: string };
+type Product = { id: string; name: string; price: string; category: string; images: string[] };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -64,8 +64,13 @@ export default async function StorePage({ params }: { params: { id: string } }) 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {products.map((p) => (
               <div key={p.id} className="border border-gray-100 rounded-2xl overflow-hidden hover:shadow-md transition">
-                <div className={`relative h-28 flex items-center justify-center text-3xl ${categoryBg(p.category)}`}>
-                  {categoryIcon(p.category)}
+                <div className={`relative h-28 flex items-center justify-center text-3xl overflow-hidden ${categoryBg(p.category)}`}>
+                  {p.images?.[0] ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
+                    <img src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
+                  ) : (
+                    categoryIcon(p.category)
+                  )}
                   <div className="absolute top-2 right-2">
                     <WishlistButton productId={p.id} />
                   </div>

@@ -26,6 +26,9 @@ export type Product = {
   is_active: boolean;
   category: string;
   attributes: Record<string, string | number | boolean>;
+  images: string[];
+  variant_group_id: string | null;
+  variant_attributes: Record<string, string>;
 };
 
 export type DashboardOrder = {

@@ -98,6 +98,56 @@ the API level, but the frontend's upload step will fail with a storage
 error before it ever gets that far — so run this before testing the
 "Apply to sell" flow.
 
+### Product image storage setup (required for product photo uploads to work)
+
+The Shop Dashboard's Add/Edit Product form uploads photos straight from
+the browser to Supabase Storage (`frontend/lib/imageUpload.ts`), same
+pattern as shop documents above — except this bucket is **public**:
+product photos need to be visible to any customer browsing the
+storefront, logged in or not, not just the uploading owner.
+
+Run this once in your Supabase project's SQL Editor:
+
+```sql
+-- 1. Create the bucket (public — product photos are meant to be seen
+--    by every visitor, unlike shop-documents above).
+insert into storage.buckets (id, name, public)
+values ('product-images', 'product-images', true)
+on conflict (id) do nothing;
+
+-- 2. Let a signed-in user upload into ONLY their own folder — same
+--    auth.uid()-prefixed-path pattern as shop-documents.
+create policy "Users can upload their own product images"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'product-images'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- 3. Anyone — including a logged-out visitor — can view any file in
+--    this bucket. This is what makes product photos actually show up
+--    on the public storefront and product detail pages.
+create policy "Anyone can view product images"
+on storage.objects for select to public
+using (bucket_id = 'product-images');
+
+-- 4. Let an owner delete their own uploaded images. Not currently
+--    called by the app (removing a photo in the form just drops its
+--    URL from the product's `images` list, same as shop documents
+--    above never delete the underlying file either) — included so the
+--    bucket's policies are complete if that's added later.
+create policy "Users can delete their own product images"
+on storage.objects for delete to authenticated
+using (
+  bucket_id = 'product-images'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+```
+
+Without this, adding a product still works, but the image upload step
+in the Add/Edit Product form will fail with a storage error before a
+photo ever gets attached.
+
 ### Phone sign-in setup (required for the Login page's Phone tab to work)
 
 The Login page's Phone tab is genuinely wired to Supabase Auth

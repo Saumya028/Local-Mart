@@ -195,7 +195,33 @@ async def create_product(
     # admin — see core/attribute_validation.py.
     await validate_attributes(db, "product", payload.category, payload.attributes)
 
-    product = Product(id=uuid.uuid4(), **payload.model_dump())
+    variant_group_id = None
+    variant_attributes: dict = {}
+    if payload.variant_of_product_id is not None:
+        sibling_result = await db.execute(select(Product).where(Product.id == payload.variant_of_product_id))
+        sibling = sibling_result.scalar_one_or_none()
+        # Same ownership check as `shop` above — a shop owner can only
+        # ever group a new product with one of THEIR OWN existing
+        # products, never a competitor's, no matter what id they send.
+        if sibling is None or sibling.shop_id != shop.id:
+            raise HTTPException(
+                status_code=404, detail="variant_of_product_id must be one of your own products"
+            )
+        if sibling.variant_group_id is None:
+            # First variant added to a previously-standalone product —
+            # promote it into a group of its own rather than requiring
+            # the seller to have planned for variants up front.
+            sibling.variant_group_id = uuid.uuid4()
+        variant_group_id = sibling.variant_group_id
+        variant_attributes = payload.variant_attributes
+
+    product_data = payload.model_dump(exclude={"variant_of_product_id", "variant_attributes"})
+    product = Product(
+        id=uuid.uuid4(),
+        variant_group_id=variant_group_id,
+        variant_attributes=variant_attributes,
+        **product_data,
+    )
     db.add(product)
     await db.commit()
     await db.refresh(product)

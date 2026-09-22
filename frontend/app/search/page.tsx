@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 
 type Product = {
   id: string;
   name: string;
   price: string;
   category: string;
+  images: string[];
 };
 
 async function searchProducts(q?: string, category?: string): Promise<Product[]> {
@@ -49,11 +51,21 @@ export default async function SearchPage({
             <Link
               key={p.id}
               href={`/product/${p.id}`}
-              className="border rounded-lg p-4 hover:border-blue-400 transition"
+              className="border rounded-lg overflow-hidden hover:border-blue-400 transition"
             >
-              <p className="font-medium text-sm">{p.name}</p>
-              <p className="text-xs text-gray-500">{p.category}</p>
-              <p className="text-sm font-semibold mt-1">₹{p.price}</p>
+              <div className={`relative h-24 flex items-center justify-center text-2xl overflow-hidden ${categoryBg(p.category)}`}>
+                {p.images?.[0] ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
+                  <img src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
+                ) : (
+                  categoryIcon(p.category)
+                )}
+              </div>
+              <div className="p-3">
+                <p className="font-medium text-sm">{p.name}</p>
+                <p className="text-xs text-gray-500">{p.category}</p>
+                <p className="text-sm font-semibold mt-1">₹{p.price}</p>
+              </div>
             </Link>
           ))}
         </div>

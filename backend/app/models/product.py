@@ -32,6 +32,12 @@ class Product(Base):
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     images: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
 
+    # See migration 0011's docstring for why this is a shared tag rather
+    # than a separate variants table. NULL = standalone product (the
+    # common case, and everything that existed before this column).
+    variant_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    variant_attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # index=True (Phase 7 hardening pass): shop_dashboard.py's product
     # list orders by this column (`ORDER BY Product.created_at DESC`)

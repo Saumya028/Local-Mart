@@ -6,7 +6,7 @@ from app.core.cache import cache_get_or_set
 from app.core.db import get_db
 from app.core.utils import parse_uuid_or_404
 from app.models import Product, Shop
-from app.schemas.product import ProductDetailOut, ProductOut
+from app.schemas.product import ProductDetailOut, ProductOut, VariantSummary
 from app.schemas.shop import ShopOut
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -15,9 +15,10 @@ router = APIRouter(prefix="/products", tags=["products"])
 @router.get("/{product_id}", response_model=ProductDetailOut)
 async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Backs the Product Detail page. One cached call returns the product
-    AND its shop's info together — the frontend needs both to render the
-    page, and this avoids the page making two separate round trips.
+    Backs the Product Detail page. One cached call returns the product,
+    its shop's info, AND its variant siblings (if any) together — the
+    frontend needs all three to render the page (gallery + buy box +
+    color/size picker), and this avoids multiple round trips.
     """
     pid = parse_uuid_or_404(product_id, "Product")
 
@@ -32,8 +33,33 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
         shop_result = await db.execute(select(Shop).where(Shop.id == product.shop_id))
         shop = shop_result.scalar_one_or_none()
 
+        variants = []
+        if product.variant_group_id is not None:
+            siblings_result = await db.execute(
+                select(Product).where(
+                    Product.variant_group_id == product.variant_group_id, Product.is_active.is_(True)
+                )
+            )
+            siblings = siblings_result.scalars().all()
+            # A picker only makes sense with something to pick BETWEEN —
+            # if every other variant in the group has since been
+            # deactivated, this one is effectively standalone again.
+            if len(siblings) > 1:
+                variants = [
+                    VariantSummary(
+                        id=s.id,
+                        variant_attributes=s.variant_attributes,
+                        price=s.price,
+                        stock_qty=s.stock_qty,
+                        is_active=s.is_active,
+                        thumbnail=s.images[0] if s.images else None,
+                    ).model_dump(mode="json")
+                    for s in siblings
+                ]
+
         data = ProductOut.model_validate(product).model_dump(mode="json")
         data["shop"] = ShopOut.model_validate(shop).model_dump(mode="json") if shop else None
+        data["variants"] = variants
         return data
 
     data = await cache_get_or_set(f"product:{product_id}", ttl_seconds=60, loader=load)

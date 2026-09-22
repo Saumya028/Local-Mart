@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 
 type CartItem = {
-  product: { id: string; name: string; price: string };
+  product: { id: string; name: string; price: string; images: string[] };
   quantity: number;
   subtotal: string;
 };
@@ -84,11 +84,19 @@ export default function CartPage() {
           <div className="space-y-4">
             {items.map((item) => (
               <div key={item.product.id} className="flex items-center justify-between border-b pb-4">
-                <div>
-                  <Link href={`/product/${item.product.id}`} className="font-medium hover:underline">
-                    {item.product.name}
-                  </Link>
-                  <p className="text-xs text-gray-400">₹{item.product.price} each</p>
+                <div className="flex items-center gap-3">
+                  {item.product.images?.[0] ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
+                    <img src={item.product.images[0]} alt="" className="w-12 h-12 rounded-md object-cover border border-gray-100 shrink-0" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-md bg-gray-50 border border-gray-100 shrink-0" />
+                  )}
+                  <div>
+                    <Link href={`/product/${item.product.id}`} className="font-medium hover:underline">
+                      {item.product.name}
+                    </Link>
+                    <p className="text-xs text-gray-400">₹{item.product.price} each</p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
