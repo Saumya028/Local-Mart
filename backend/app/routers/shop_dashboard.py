@@ -3,16 +3,17 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
 from app.core.db import get_db
 from app.core.order_status import ALLOWED_TRANSITIONS, RECOGNIZED_STATUSES
+from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import Order, OrderItem, Product, Profile, Shop
+from app.models import Order, OrderItem, Product, Profile, ReturnRequest, Shop
 from app.schemas.dashboard import (
     AnalyticsOut,
     DashboardMetrics,
@@ -22,6 +23,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
+from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -388,6 +390,13 @@ async def update_order_status(
         )
 
     order.status = payload.status
+    if payload.status == "delivered":
+        # Stamped here, once, the moment the order actually reaches this
+        # status — this is what the return/exchange window
+        # (app/core/return_status.py's RETURN_WINDOW) counts from. Using
+        # created_at instead would unfairly shrink a customer's return
+        # window by however long the order took to actually arrive.
+        order.delivered_at = datetime.now(timezone.utc)
     await db.commit()
 
     buyer_result = await db.execute(
@@ -412,6 +421,7 @@ async def update_order_status(
         "buyer_email": buyer_email,
         "buyer_name": buyer_name,
         "item_count": int(item_count),
+        "delivered_at": order.delivered_at,
     }
 
 
@@ -655,3 +665,211 @@ async def dashboard_analytics(
         orders_by_day=orders_points,
         revenue_by_day=revenue_points,
     )
+
+
+def _serialize_return(rr: ReturnRequest, **extra) -> dict:
+    data = ReturnRequestOut.model_validate(rr).model_dump(mode="json")
+    data.update(extra)
+    return data
+
+
+@router.get("/returns", response_model=list[ReturnRequestOut])
+async def incoming_returns(
+    shop_id: uuid.UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return/exchange requests opened against this shop owner's own shop(s)
+    (or every shop, for an admin) — the shop-side counterpart to
+    routers/returns.py's customer-facing endpoints. Scoped the same way
+    incoming_orders above is: by owned_shop_ids for a shop_owner, or
+    unrestricted (optionally filtered to one shop_id) for an admin.
+    """
+    owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
+
+    stmt = (
+        select(ReturnRequest, Product.name, Profile.email, Profile.full_name)
+        .join(OrderItem, OrderItem.id == ReturnRequest.order_item_id)
+        .join(Product, Product.id == OrderItem.product_id)
+        .join(Profile, Profile.id == ReturnRequest.user_id)
+    )
+    if shop_id is not None:
+        stmt = stmt.where(ReturnRequest.shop_id == shop_id)
+    if owned_shop_ids is not None:
+        stmt = stmt.where(ReturnRequest.shop_id.in_(owned_shop_ids))
+    if status_filter is not None:
+        stmt = stmt.where(ReturnRequest.status == status_filter)
+
+    result = await db.execute(stmt.order_by(ReturnRequest.created_at.desc()))
+    return [
+        _serialize_return(rr, product_name=pname, buyer_email=email, buyer_name=name)
+        for rr, pname, email, name in result.all()
+    ]
+
+
+@router.patch("/returns/{return_id}/status", response_model=ReturnRequestOut)
+async def update_return_status(
+    return_id: str,
+    payload: ReturnStatusUpdate,
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    A shop owner's response to one return/exchange request:
+
+    - "approved": accepts the request — the customer is told to hand the
+      item back (in person, or via whatever pickup process the shop
+      arranges outside this app for now).
+    - "rejected": declines it. Requires a non-empty `shop_note` so the
+      customer always sees why, the same way a shop owner suspending a
+      user (admin.py) or rejecting a shop's documents always requires a
+      reason.
+    - "completed": confirms the item was actually returned and resolves
+      it — this is the one step that touches stock and, for an exchange,
+      creates a new order:
+        * "return": the returned quantity goes back into the ORIGINAL
+          product's stock_qty (it's sellable again).
+        * "exchange": the original quantity is restocked exactly like a
+          return, the replacement product's stock is atomically reserved
+          (the same race-safe UPDATE ... WHERE stock_qty >= qty used at
+          checkout in routers/orders.py — 409 if it's since sold out,
+          leaving the request "approved" so the shop can retry or
+          reject instead), and a brand-new Order + OrderItem is created
+          for that replacement item, starting at "confirmed" so it flows
+          through the shop's normal fulfillment pipeline just like any
+          other order. If the replacement costs more than the original
+          (ReturnRequest.price_difference > 0), the customer must have
+          already paid that top-up — via
+          POST /returns/{id}/difference-payment — before this is allowed
+          to complete; a shop owner can't be left holding a costlier item
+          with no way to collect the difference.
+
+    No live payment-gateway refund call happens here for the REFUND side
+    of things — Payment (app/models/payment.py) only stores the Razorpay
+    ORDER id, not the individual payment id a refund API call needs, so
+    wiring up an actual Razorpay refund (or settling a negative
+    price_difference — a cheaper replacement, where the shop owes money
+    back) is future work; "completed" records that it was settled
+    through whatever process the shop uses today (UPI, bank transfer,
+    cash) and is the number that should reconcile against it.
+    """
+    rr_result = await db.execute(select(ReturnRequest).where(ReturnRequest.id == parse_uuid_or_404(return_id, "Return request")))
+    rr = rr_result.scalar_one_or_none()
+    if rr is None:
+        raise HTTPException(status_code=404, detail="Return request not found")
+
+    shop = await _get_owned_shop_or_403(rr.shop_id, user, db)
+    _require_approved_shop(shop)
+
+    allowed_next = SHOP_ALLOWED_TRANSITIONS.get(rr.status, set())
+    if payload.status not in allowed_next:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Cannot move a return request from "{rr.status}" to "{payload.status}"',
+        )
+
+    if payload.status == "rejected" and not (payload.shop_note and payload.shop_note.strip()):
+        raise HTTPException(status_code=400, detail="A note explaining the rejection is required")
+
+    new_order: Order | None = None
+
+    if payload.status == "completed":
+        if rr.request_type == "exchange" and rr.price_difference > 0 and not rr.difference_paid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The customer still owes ₹{rr.price_difference} for this exchange — "
+                    "this can't be completed until they've paid it"
+                ),
+            )
+
+        item_result = await db.execute(select(OrderItem).where(OrderItem.id == rr.order_item_id))
+        order_item = item_result.scalar_one_or_none()
+        if order_item is not None:
+            await db.execute(
+                update(Product)
+                .where(Product.id == order_item.product_id)
+                .values(stock_qty=Product.stock_qty + rr.quantity)
+            )
+
+        if rr.request_type == "exchange" and rr.exchange_product_id is not None:
+            # Reserve stock and read back the current price in the same
+            # atomic statement — same race-safe pattern checkout uses in
+            # routers/orders.py — so the new Order below is priced off
+            # exactly the stock we actually reserved, not a stale read
+            # from before this UPDATE.
+            reserve_stmt = (
+                update(Product)
+                .where(Product.id == rr.exchange_product_id, Product.stock_qty >= rr.quantity)
+                .values(stock_qty=Product.stock_qty - rr.quantity)
+                .returning(Product.id, Product.price)
+            )
+            reserved = await db.execute(reserve_stmt)
+            reserved_row = reserved.first()
+            if reserved_row is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The replacement item no longer has enough stock for this exchange",
+                )
+            _, exchange_price = reserved_row
+
+            # The user's ask: an exchange isn't just a stock swap, it's a
+            # NEW order for the replacement item — so it shows up in the
+            # customer's Orders and the shop's Orders/dashboard exactly
+            # like anything else they bought, and rides the same
+            # confirmed -> preparing -> ready -> delivered pipeline
+            # (routers/shop_dashboard.py's update_order_status) instead of
+            # needing its own parallel fulfillment tracking. Starts at
+            # "confirmed" rather than "pending": there's no separate
+            # payment to wait on here — the original purchase, plus
+            # whatever top-up difference was required, is already
+            # settled by this point.
+            original_order_result = await db.execute(select(Order).where(Order.id == rr.order_id))
+            original_order = original_order_result.scalar_one_or_none()
+            delivery_address = original_order.delivery_address if original_order else ""
+
+            new_order = Order(
+                id=uuid.uuid4(),
+                user_id=rr.user_id,
+                shop_id=rr.shop_id,
+                status="confirmed",
+                total_amount=exchange_price * rr.quantity,
+                delivery_address=delivery_address,
+            )
+            db.add(new_order)
+            await db.flush()
+            db.add(
+                OrderItem(
+                    id=uuid.uuid4(),
+                    order_id=new_order.id,
+                    product_id=rr.exchange_product_id,
+                    quantity=rr.quantity,
+                    unit_price=exchange_price,
+                )
+            )
+            rr.new_order_id = new_order.id
+
+    rr.status = payload.status
+    if payload.shop_note is not None:
+        rr.shop_note = payload.shop_note
+    if payload.status in ("rejected", "completed"):
+        rr.resolved_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(rr)
+
+    product_result = await db.execute(
+        select(Product.name).join(OrderItem, OrderItem.product_id == Product.id).where(
+            OrderItem.id == rr.order_item_id
+        )
+    )
+    product_name = product_result.scalar_one_or_none()
+
+    buyer_result = await db.execute(
+        select(Profile.email, Profile.full_name).where(Profile.id == rr.user_id)
+    )
+    buyer_email, buyer_name = buyer_result.one()
+
+    return _serialize_return(rr, product_name=product_name, buyer_email=buyer_email, buyer_name=buyer_name)

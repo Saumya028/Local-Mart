@@ -34,9 +34,19 @@ class OrderOut(BaseModel):
     # defaults keep this schema safe to reuse elsewhere without a join).
     shop_name: str | None = None
     item_count: int = 0
+    # Null until a shop owner marks the order "delivered" — the frontend
+    # uses this (plus app/core/return_status.py's RETURN_WINDOW) to show
+    # "Return by <date>" and to know when that window has closed, without
+    # a second round trip just to fetch this one timestamp.
+    delivered_at: datetime | None = None
 
 
 class OrderItemOut(BaseModel):
+    # The OrderItem row's own id — what the customer actually references
+    # when opening a return/exchange (POST /orders/{id}/returns takes an
+    # order_item_id, not a product_id, since the same product could in
+    # theory appear more than once across an order's history).
+    id: uuid.UUID
     # Guaranteed present — OrderItem.product_id is ON DELETE RESTRICT
     # against products, so a product can never actually be deleted while
     # an order references it. Used by the frontend's "Reorder" action to
@@ -46,6 +56,11 @@ class OrderItemOut(BaseModel):
     quantity: int
     unit_price: Decimal
     subtotal: Decimal
+    # How many units of this line item are already tied up in a
+    # non-cancelled/non-rejected return or exchange request — lets the
+    # frontend grey out "Return" once every unit is already claimed,
+    # without a separate call to list returns first.
+    returned_qty: int = 0
 
 
 class OrderDetailOut(OrderOut):

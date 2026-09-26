@@ -2,7 +2,7 @@
 
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "products" | "inventory" | "analytics";
+export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics";
 
 function statusLabel(shop: Shop | null): string {
   if (!shop) return "";
@@ -49,6 +49,16 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
     ),
   },
   {
+    key: "returns",
+    label: "Returns",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <path d="M4 8h9a3.5 3.5 0 0 1 0 7H9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M7 5 4 8l3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     key: "products",
     label: "Products",
     icon: (
@@ -89,6 +99,7 @@ export function Sidebar({
   tab,
   onSelectTab,
   pendingCount,
+  pendingReturnsCount = 0,
 }: {
   shop: Shop | null;
   shops: Shop[];
@@ -96,6 +107,7 @@ export function Sidebar({
   tab: TabKey;
   onSelectTab: (t: TabKey) => void;
   pendingCount: number;
+  pendingReturnsCount?: number;
 }) {
   return (
     <aside className="w-60 shrink-0 border-r border-gray-100 bg-white flex flex-col h-full">
@@ -149,6 +161,11 @@ export function Sidebar({
             {item.key === "orders" && pendingCount > 0 && (
               <span className="bg-blue-600 text-white text-[11px] font-semibold rounded-full w-5 h-5 flex items-center justify-center">
                 {pendingCount}
+              </span>
+            )}
+            {item.key === "returns" && pendingReturnsCount > 0 && (
+              <span className="bg-amber-500 text-white text-[11px] font-semibold rounded-full w-5 h-5 flex items-center justify-center">
+                {pendingReturnsCount}
               </span>
             )}
           </button>

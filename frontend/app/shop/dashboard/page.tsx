@@ -9,6 +9,7 @@ import { Sidebar, TabKey } from "@/components/shop-dashboard/Sidebar";
 import { Topbar } from "@/components/shop-dashboard/Topbar";
 import { DashboardTab } from "@/components/shop-dashboard/DashboardTab";
 import { OrdersTab } from "@/components/shop-dashboard/OrdersTab";
+import { ReturnsTab } from "@/components/shop-dashboard/ReturnsTab";
 import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
@@ -22,6 +23,7 @@ import DynamicAttributeFields from "@/components/DynamicAttributeFields";
 const TAB_TITLES: Record<TabKey, string> = {
   dashboard: "Dashboard",
   orders: "Orders",
+  returns: "Returns",
   products: "Products",
   inventory: "Inventory",
   analytics: "Analytics",
@@ -36,6 +38,7 @@ export default function ShopDashboardPage() {
   const [loadingShops, setLoadingShops] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
 
   const canSell = profile?.role === "shop_owner" || profile?.role === "admin";
 
@@ -102,6 +105,11 @@ export default function ShopDashboardPage() {
         if (!cancelled) setPendingCount(orders.filter((o) => o.status === "confirmed").length);
       })
       .catch(() => {});
+    apiFetch(`/dashboard/returns?shop_id=${selectedShopId}`)
+      .then((returns: { status: string }[]) => {
+        if (!cancelled) setPendingReturnsCount(returns.filter((r) => r.status === "requested").length);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -150,6 +158,7 @@ export default function ShopDashboardPage() {
           tab={tab}
           onSelectTab={setTab}
           pendingCount={0}
+          pendingReturnsCount={0}
         />
         <div className="flex-1 overflow-y-auto">
           <ShopStatusScreen shop={selectedShop} userId={profile!.id} onUpdated={loadShops} />
@@ -167,6 +176,7 @@ export default function ShopDashboardPage() {
         tab={tab}
         onSelectTab={setTab}
         pendingCount={pendingCount}
+        pendingReturnsCount={pendingReturnsCount}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar title={TAB_TITLES[tab]} name={profile?.full_name ?? profile?.email ?? null} />
@@ -175,6 +185,7 @@ export default function ShopDashboardPage() {
             <DashboardTab shopId={selectedShopId} onGoToOrders={() => setTab("orders")} />
           )}
           {selectedShopId && tab === "orders" && <OrdersTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "returns" && <ReturnsTab shopId={selectedShopId} />}
           {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
           {selectedShopId && tab === "analytics" && <AnalyticsTab shopId={selectedShopId} />}

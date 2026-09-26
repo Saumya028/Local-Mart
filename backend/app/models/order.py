@@ -47,6 +47,13 @@ class Order(Base):
     delivery_address: Mapped[str] = mapped_column(String)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set once, the moment a shop owner moves this order to "delivered"
+    # (see routers/shop_dashboard.py's update_order_status) — never
+    # touched again after that. This is what the return/exchange window
+    # (app/core/return_status.py's RETURN_WINDOW) counts from; using
+    # created_at instead would unfairly shrink the window by however long
+    # the order took to actually arrive.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Composite indexes (Phase 7): order history (`GET /orders`) and the
     # Shop Dashboard's order list (`GET /dashboard/orders`) both do

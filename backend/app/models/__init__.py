@@ -8,6 +8,7 @@ from app.models.payment import Payment
 from app.models.platform_settings import PlatformSettings
 from app.models.product import Product
 from app.models.profile import Profile
+from app.models.return_request import ReturnRequest
 from app.models.shop import Shop
 from app.models.wishlist_item import WishlistItem
 
@@ -27,4 +28,5 @@ __all__ = [
     "PlatformSettings",
     "WishlistItem",
     "AttributeSchema",
+    "ReturnRequest",
 ]

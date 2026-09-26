@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { AccountSidebar, AccountTabKey } from "@/components/account/Sidebar";
 import { OrdersTab } from "@/components/account/OrdersTab";
+import { ReturnsTab } from "@/components/account/ReturnsTab";
 import { WishlistTab } from "@/components/account/WishlistTab";
 import { AddressesTab } from "@/components/account/AddressesTab";
 import { SettingsTab } from "@/components/account/SettingsTab";
@@ -13,6 +14,7 @@ import { ComingSoonTab } from "@/components/account/ComingSoonTab";
 
 const TAB_TITLES: Record<AccountTabKey, string> = {
   orders: "My Orders",
+  returns: "My Returns",
   wishlist: "Wishlist",
   addresses: "Addresses",
   payments: "Saved Payments",
@@ -102,6 +104,7 @@ function ProfilePageContent() {
           <h2 className="text-lg font-bold text-gray-900">{TAB_TITLES[tab]}</h2>
 
           {tab === "orders" && <OrdersTab onOrdersLoaded={(orders) => setOrderCount(orders.length)} />}
+          {tab === "returns" && <ReturnsTab />}
           {tab === "wishlist" && <WishlistTab onLoaded={(items) => setWishlistCount(items.length)} />}
           {tab === "addresses" && <AddressesTab />}
           {tab === "settings" && <SettingsTab profile={profile} onUpdated={() => refresh()} />}

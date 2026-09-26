@@ -4,6 +4,7 @@ import { AccountProfile, initials } from "./types";
 
 export type AccountTabKey =
   | "orders"
+  | "returns"
   | "wishlist"
   | "addresses"
   | "payments"
@@ -13,6 +14,7 @@ export type AccountTabKey =
 
 const NAV: { key: AccountTabKey; label: string; icon: string }[] = [
   { key: "orders", label: "My Orders", icon: "📦" },
+  { key: "returns", label: "My Returns", icon: "↩" },
   { key: "wishlist", label: "Wishlist", icon: "♡" },
   { key: "addresses", label: "Addresses", icon: "📍" },
   { key: "payments", label: "Saved Payments", icon: "💳" },
@@ -40,10 +42,10 @@ export function AccountSidebar({
     <aside className="w-full sm:w-72 shrink-0 space-y-4">
       <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
         <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-br from-blue-500 to-emerald-400 text-white flex items-center justify-center text-lg font-semibold">
-          {initials(profile.full_name, profile.email)}
+          {initials(profile.full_name, profile.email, profile.phone)}
         </div>
-        <p className="font-semibold text-gray-900 mt-3">{profile.full_name ?? profile.email}</p>
-        <p className="text-sm text-gray-500">{profile.email}</p>
+        <p className="font-semibold text-gray-900 mt-3">{profile.full_name ?? profile.email ?? profile.phone ?? "Your account"}</p>
+        {profile.email && <p className="text-sm text-gray-500">{profile.email}</p>}
         {profile.phone && <p className="text-sm text-gray-500">{profile.phone}</p>}
 
         <div className="grid grid-cols-2 gap-2 border-t border-gray-100 mt-4 pt-4">

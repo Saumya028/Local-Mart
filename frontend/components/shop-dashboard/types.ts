@@ -43,6 +43,63 @@ export type DashboardOrder = {
   created_at: string;
 };
 
+export type ReturnRequestType = "return" | "exchange";
+
+export type DashboardReturn = {
+  id: string;
+  order_id: string;
+  order_item_id: string;
+  shop_id: string;
+  request_type: ReturnRequestType;
+  quantity: number;
+  reason: string;
+  comment: string | null;
+  exchange_product_id: string | null;
+  refund_amount: string;
+  status: "requested" | "approved" | "rejected" | "completed" | "cancelled";
+  shop_note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  product_name: string | null;
+  exchange_product_name: string | null;
+  buyer_name: string | null;
+  buyer_email: string | null;
+  // Exchange price-difference settlement — see backend's
+  // app/models/return_request.py. Always "0.00"/false/null for a plain
+  // "return". A shop owner can't mark a positive-difference exchange
+  // "completed" until difference_paid is true (enforced server-side in
+  // update_return_status — this is just what lets the UI explain why the
+  // button is disabled instead of the customer only finding out via a
+  // failed request).
+  price_difference: string;
+  difference_paid: boolean;
+  new_order_id: string | null;
+};
+
+// Mirrors the backend's SHOP_ALLOWED_TRANSITIONS in
+// app/core/return_status.py — kept here purely to decide which action
+// buttons to show; the backend is what actually enforces this, so a
+// mismatch here is a UI annoyance at worst, never a security gap.
+export const RETURN_STATUS_TRANSITIONS: Record<string, { next: string; label: string }[]> = {
+  requested: [
+    { next: "approved", label: "Approve" },
+    { next: "rejected", label: "Reject" },
+  ],
+  approved: [{ next: "completed", label: "Mark Completed" }],
+};
+
+export const RETURN_STATUS_META: Record<string, { label: string; className: string }> = {
+  requested: { label: "Requested", className: "bg-amber-100 text-amber-700" },
+  approved: { label: "Approved", className: "bg-blue-100 text-blue-700" },
+  completed: { label: "Completed", className: "bg-emerald-100 text-emerald-700" },
+  rejected: { label: "Rejected", className: "bg-red-100 text-red-700" },
+  cancelled: { label: "Cancelled", className: "bg-gray-100 text-gray-500" },
+};
+
+export function returnStatusMeta(status: string) {
+  return RETURN_STATUS_META[status] ?? { label: status, className: "bg-gray-100 text-gray-600" };
+}
+
 export type Summary = { shop_id: string; shop_name: string; confirmed_orders: number; revenue: string };
 
 export type DayPoint = { label: string; date: string; value: string };

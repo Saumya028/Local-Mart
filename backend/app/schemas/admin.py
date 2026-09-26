@@ -28,7 +28,7 @@ class AdminUserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    email: str
+    email: str | None
     full_name: str | None
     role: str
     created_at: datetime
@@ -65,7 +65,7 @@ class AdminShopOut(BaseModel):
     rejection_reason: str | None = None
     created_at: datetime
     owner_id: uuid.UUID
-    owner_email: str
+    owner_email: str | None
     owner_name: str | None = None
     location: str | None = None
 

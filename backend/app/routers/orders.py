@@ -14,7 +14,7 @@ from app.core.payment_confirmation import mark_payment_captured, mark_payment_fa
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
-from app.models import Address, Order, OrderItem, Payment, Product, Profile, Shop
+from app.models import Address, Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
 from app.schemas.order import (
     CheckoutRequest,
     CheckoutResponse,
@@ -275,6 +275,7 @@ async def list_orders(
             "created_at": order.created_at,
             "shop_name": shop_name,
             "item_count": item_count,
+            "delivered_at": order.delivered_at,
         }
         for order, shop_name, item_count in result.all()
     ]
@@ -301,15 +302,33 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
         .join(Product, Product.id == OrderItem.product_id)
         .where(OrderItem.order_id == order.id)
     )
+    order_items = items_result.all()
+
+    # One grouped query for every item's already-claimed return quantity,
+    # rather than a query per line item — see routers/returns.py's
+    # _returned_qty_for_item for the same "non-cancelled/non-rejected"
+    # rule applied per-item there.
+    returned_result = await db.execute(
+        select(ReturnRequest.order_item_id, func.coalesce(func.sum(ReturnRequest.quantity), 0))
+        .where(
+            ReturnRequest.order_id == order.id,
+            ReturnRequest.status.notin_(("rejected", "cancelled")),
+        )
+        .group_by(ReturnRequest.order_item_id)
+    )
+    returned_by_item = dict(returned_result.all())
+
     items = [
         {
+            "id": item.id,
             "product_id": item.product_id,
             "product_name": name,
             "quantity": item.quantity,
             "unit_price": item.unit_price,
             "subtotal": item.unit_price * item.quantity,
+            "returned_qty": int(returned_by_item.get(item.id, 0)),
         }
-        for item, name in items_result.all()
+        for item, name in order_items
     ]
 
     data = OrderOut.model_validate(order).model_dump(mode="json")

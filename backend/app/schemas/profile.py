@@ -16,7 +16,7 @@ class ProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    email: str
+    email: str | None
     full_name: str | None
     phone: str | None
     role: str

@@ -108,6 +108,11 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
                   {reorderingId === order.id ? "Adding…" : "Reorder"}
                 </button>
               )}
+              {order.status === "delivered" && (
+                <Link href={`/orders/${order.id}`} className="text-xs text-gray-500 hover:underline">
+                  Return / Exchange
+                </Link>
+              )}
               {reorderMsg?.id === order.id && (
                 <p className="text-xs text-gray-400 max-w-[10rem] text-right">{reorderMsg.text}</p>
               )}
