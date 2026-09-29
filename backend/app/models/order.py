@@ -55,6 +55,16 @@ class Order(Base):
     # the order took to actually arrive.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Set the moment a delivery person (or manager/owner) marks this
+    # order "delivered" — see app/core/order_status.py's
+    # DELIVERY_PROOF_REQUIRED_STATUSES and routers/shop_dashboard.py's
+    # update_order_status, which rejects the "delivered" transition
+    # without one. A plain public-bucket URL (same pattern as
+    # products.images), shown to both the shop's staff and the customer
+    # on their own order-tracking page as proof the order actually
+    # arrived.
+    delivery_proof_photo_url: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Composite indexes (Phase 7): order history (`GET /orders`) and the
     # Shop Dashboard's order list (`GET /dashboard/orders`) both do
     # exactly "WHERE user_id/shop_id = X ORDER BY created_at DESC" — a

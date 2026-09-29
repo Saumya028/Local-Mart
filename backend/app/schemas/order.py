@@ -39,6 +39,12 @@ class OrderOut(BaseModel):
     # "Return by <date>" and to know when that window has closed, without
     # a second round trip just to fetch this one timestamp.
     delivered_at: datetime | None = None
+    # Set once a delivery person (or whoever marks it, if the shop has
+    # no staff hired) confirms drop-off — see app/core/order_status.py's
+    # DELIVERY_PROOF_REQUIRED_STATUSES. Shown on the customer's own
+    # order-tracking page as proof of delivery, not just in the shop's
+    # dashboard.
+    delivery_proof_photo_url: str | None = None
 
 
 class OrderItemOut(BaseModel):
@@ -74,10 +80,15 @@ class OrderDetailOut(OrderOut):
 
 class OrderStatusUpdate(BaseModel):
     # Constrained further in routers/shop_dashboard.py's ALLOWED_TRANSITIONS
-    # map — a shop owner can only move an order forward through a defined
-    # sequence (confirmed -> shipped -> delivered), never set it to an
-    # arbitrary status.
+    # map — shop staff can only move an order forward through a defined
+    # sequence (confirmed -> preparing -> packing -> out_for_delivery ->
+    # delivered), never set it to an arbitrary status.
     status: str
+    # Required (validated server-side, not just here) when `status` is
+    # "delivered" — see app/core/order_status.py's
+    # DELIVERY_PROOF_REQUIRED_STATUSES. A public-bucket URL the frontend
+    # uploads to first (same pattern as product images), not a raw file.
+    delivery_proof_photo_url: str | None = None
 
 
 class CheckoutResponse(BaseModel):

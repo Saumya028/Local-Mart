@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,3 +56,16 @@ class Profile(Base):
     # security.py's get_current_user so a suspended account is locked out
     # on the very next request, not just hidden from the UI.
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    # Staff accounts (role="manager"/"delivery_partner") are created BY a shop
+    # owner, for exactly one shop — see routers/shop_dashboard.py's
+    # /dashboard/staff endpoints and core/supabase_admin.py for how the
+    # actual login gets provisioned. Null for every other role
+    # (customer/shop_owner/admin); a shop_owner's own shops are still
+    # found via Shop.owner_id, never through this column. ondelete
+    # SET NULL rather than CASCADE: if a shop is ever deleted, its former
+    # staff's profile rows should survive (just with no shop attached),
+    # not vanish along with it.
+    shop_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"), nullable=True, index=True
+    )

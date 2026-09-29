@@ -2,7 +2,25 @@
 
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics";
+export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "staff";
+
+// Which tabs each role can see, in nav order. Purely a UI convenience —
+// the backend independently enforces the same boundaries on every
+// endpoint (see shop_dashboard.py's require_role/STAFF_ROLES), so a
+// mismatch here would just show a tab that 403s, never a real security
+// gap. shop_owner/admin see everything; a manager gets everything
+// except Staff (owner-only); a delivery hire gets Orders alone — the
+// one tab their whole job is built around.
+const ROLE_TABS: Record<string, TabKey[]> = {
+  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "staff"],
+  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "staff"],
+  manager: ["dashboard", "orders", "returns", "products", "inventory", "analytics"],
+  delivery_partner: ["orders"],
+};
+
+export function tabsForRole(role: string | undefined): TabKey[] {
+  return ROLE_TABS[role ?? ""] ?? ROLE_TABS.shop_owner;
+}
 
 function statusLabel(shop: Shop | null): string {
   if (!shop) return "";
@@ -90,6 +108,17 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
       </svg>
     ),
   },
+  {
+    key: "staff",
+    label: "Staff",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <circle cx="7" cy="6.5" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M2.5 17c0-2.8 2-4.5 4.5-4.5s4.5 1.7 4.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M13 8a2.2 2.2 0 1 0 0-4.4M14 12.7c1.9.4 3 1.7 3 4.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 export function Sidebar({
@@ -100,6 +129,7 @@ export function Sidebar({
   onSelectTab,
   pendingCount,
   pendingReturnsCount = 0,
+  role,
 }: {
   shop: Shop | null;
   shops: Shop[];
@@ -108,7 +138,10 @@ export function Sidebar({
   onSelectTab: (t: TabKey) => void;
   pendingCount: number;
   pendingReturnsCount?: number;
+  role?: string;
 }) {
+  const visible = new Set(tabsForRole(role));
+  const items = NAV.filter((item) => visible.has(item.key));
   return (
     <aside className="w-60 shrink-0 border-r border-gray-100 bg-white flex flex-col h-full">
       <div className="flex items-center gap-2 px-5 py-5">
@@ -146,7 +179,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 px-3 space-y-1">
-        {NAV.map((item) => (
+        {items.map((item) => (
           <button
             key={item.key}
             onClick={() => onSelectTab(item.key)}

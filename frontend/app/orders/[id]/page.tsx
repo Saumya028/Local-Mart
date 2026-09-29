@@ -17,7 +17,8 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Payment pending",
   confirmed: "Confirmed",
   preparing: "Preparing",
-  ready: "Out for delivery",
+  packing: "Packing your order",
+  out_for_delivery: "Out for delivery",
   delivered: "Delivered",
   payment_failed: "Payment failed",
 };
@@ -135,6 +136,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           <p className="text-xs text-gray-400 mt-1">
             Eligible for return/exchange until {returnDeadline(order.delivered_at).toLocaleDateString("en-IN")}
           </p>
+        )}
+        {order.delivery_proof_photo_url && (
+          <a
+            href={order.delivery_proof_photo_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block text-xs text-blue-600 underline mt-2"
+          >
+            View proof of delivery
+          </a>
         )}
       </div>
 

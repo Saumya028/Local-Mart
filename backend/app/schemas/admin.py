@@ -12,8 +12,14 @@ from pydantic import BaseModel, ConfigDict, field_validator
 # "delivery_partner" added for the Manage Users page's "Delivery
 # Partners" count — riders are just another profile role, not a
 # separate identity table, since nothing else in the product yet needs
-# more than "who is one".
-VALID_ROLES = ("customer", "shop_owner", "admin", "delivery_partner")
+# more than "who is one". "manager" added alongside it once shop-owner-
+# created staff accounts shipped (routers/shop_dashboard.py's
+# /dashboard/staff) — both roles can now also carry a `shop_id` (see
+# models/profile.py), which this generic admin role-change endpoint
+# deliberately does NOT set; using it to hand someone either role
+# manually leaves them shop_id-less until a shop owner actually adds
+# them as staff.
+VALID_ROLES = ("customer", "shop_owner", "admin", "delivery_partner", "manager")
 
 # Every approval state a shop application can be in.
 VALID_APPROVAL_STATUSES = ("pending", "approved", "rejected")

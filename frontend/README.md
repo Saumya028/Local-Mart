@@ -148,6 +148,49 @@ Without this, adding a product still works, but the image upload step
 in the Add/Edit Product form will fail with a storage error before a
 photo ever gets attached.
 
+### Delivery proof photo storage setup (required for the delivery person's "Mark Delivered" step)
+
+Same pattern as product images above (`frontend/lib/deliveryProofUpload.ts`),
+also a **public** bucket: a proof-of-delivery photo is shown on the
+customer's own order-tracking page too, not just inside the shop's
+Staff/Orders dashboard.
+
+```sql
+insert into storage.buckets (id, name, public)
+values ('delivery-proofs', 'delivery-proofs', true)
+on conflict (id) do nothing;
+
+create policy "Staff can upload their own delivery proof photos"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'delivery-proofs'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "Anyone can view delivery proof photos"
+on storage.objects for select to public
+using (bucket_id = 'delivery-proofs');
+```
+
+Without this, every other order-status step still works, but marking
+an order "Delivered" will fail with a storage error before the status
+actually changes — a photo is required for that specific step (see
+`app/core/order_status.py`'s `DELIVERY_PROOF_REQUIRED_STATUSES`).
+
+### Staff accounts setup (required for the Shop Dashboard's Staff tab to work)
+
+A shop owner creates real logins for their manager/delivery hires
+directly from the Staff tab — this calls Supabase's Admin API
+server-side (`backend/app/core/supabase_admin.py`), which needs the
+**service_role** secret key, never the anon key the rest of the backend
+already uses. From your Supabase project: Project Settings -> API ->
+Project API keys -> reveal and copy "service_role", then set it as
+`SUPABASE_SERVICE_ROLE_KEY` in the backend's `.env` (see `.env.example`).
+
+Without this, every other dashboard feature keeps working, but creating
+a staff member will fail with a clear "not configured yet" error
+instead of a confusing one.
+
 ### Phone sign-in setup (required for the Login page's Phone tab to work)
 
 The Login page's Phone tab is genuinely wired to Supabase Auth

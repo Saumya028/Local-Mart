@@ -22,6 +22,7 @@ export type OrderDetailItem = {
 export type OrderDetail = AccountOrder & {
   items: OrderDetailItem[];
   delivered_at: string | null;
+  delivery_proof_photo_url?: string | null;
   shop: { id: string; name: string } | null;
 };
 
@@ -132,7 +133,8 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
   pending: { label: "Payment Pending", className: "bg-gray-100 text-gray-600" },
   confirmed: { label: "Confirmed", className: "bg-blue-50 text-blue-600" },
   preparing: { label: "Preparing", className: "bg-blue-50 text-blue-600" },
-  ready: { label: "Out for Delivery", className: "bg-amber-50 text-amber-600" },
+  packing: { label: "Packing", className: "bg-indigo-50 text-indigo-600" },
+  out_for_delivery: { label: "Out for Delivery", className: "bg-amber-50 text-amber-600" },
   delivered: { label: "Delivered", className: "bg-emerald-50 text-emerald-600" },
   payment_failed: { label: "Payment Failed", className: "bg-red-50 text-red-600" },
 };

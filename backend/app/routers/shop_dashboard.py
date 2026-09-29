@@ -9,9 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
 from app.core.db import get_db
-from app.core.order_status import ALLOWED_TRANSITIONS, RECOGNIZED_STATUSES
+from app.core.order_status import ALLOWED_TRANSITIONS, DELIVERY_PROOF_REQUIRED_STATUSES, RECOGNIZED_STATUSES
 from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
 from app.core.security import require_role
+from app.core.supabase_admin import (
+    create_supabase_user,
+    delete_supabase_user,
+    update_supabase_user_password,
+)
 from app.core.utils import parse_uuid_or_404
 from app.models import Order, OrderItem, Product, Profile, ReturnRequest, Shop
 from app.schemas.dashboard import (
@@ -25,6 +30,16 @@ from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
+from app.schemas.staff import StaffCreate, StaffOut, StaffUpdate
+
+# Roles allowed to reach the SHARED, shop-scoped parts of this dashboard
+# (products/inventory, returns, orders, analytics) beyond the owner —
+# see individual endpoints below for which of these three actually apply
+# per endpoint. Staff management itself (/dashboard/staff) stays
+# shop_owner/admin only, never listed here. "delivery_partner" (not
+# "delivery") to match the role name app/schemas/admin.py's VALID_ROLES
+# already reserved for this concept.
+STAFF_ROLES = ("manager", "delivery_partner")
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -34,7 +49,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 # counts as a real sale. Note in particular: ALLOWED_TRANSITIONS has no
 # entry leading to "cancelled" anywhere — there is no reject/cancel
 # action a shop owner can take here, by design. The only forward path
-# is confirmed ("Pending" in the UI) -> preparing -> ready -> delivered.
+# is confirmed ("Pending" in the UI) -> preparing -> packing -> out_for_delivery -> delivered.
 
 DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -87,6 +102,46 @@ async def _get_owned_shop_or_403(shop_id: uuid.UUID, user: Profile, db: AsyncSes
     return shop
 
 
+def _user_can_manage_shop(shop: Shop | None, user: Profile) -> bool:
+    """
+    The broader counterpart to `_user_owns_shop` above, for every
+    endpoint a manager/delivery staff member should ALSO be able to
+    reach (products, inventory, orders, returns, analytics — never shop
+    settings or staff management, which stay `_user_owns_shop`-gated).
+    A staff profile's single shop lives on `Profile.shop_id` (see
+    models/profile.py) — set once, at account creation, never something
+    the staff member edits themselves.
+    """
+    if shop is None:
+        return False
+    if user.role == "admin" or shop.owner_id == user.id:
+        return True
+    return user.role in STAFF_ROLES and user.shop_id == shop.id
+
+
+async def _get_accessible_shop_ids(user: Profile, db: AsyncSession) -> list[uuid.UUID] | None:
+    """
+    The staff-aware counterpart to `_get_owned_shop_ids` — returns None
+    for admin (meaning "no filter, sees everything", matching every
+    existing `owned_shop_ids is None` check below), a shop_owner's own
+    shops for that role, and the single assigned shop (or none at all)
+    for a manager/delivery staff member.
+    """
+    if user.role == "admin":
+        return None
+    if user.role == "shop_owner":
+        return await _get_owned_shop_ids(user.id, db)
+    return [user.shop_id] if user.shop_id is not None else []
+
+
+async def _get_accessible_shop_or_403(shop_id: uuid.UUID, user: Profile, db: AsyncSession) -> Shop:
+    result = await db.execute(select(Shop).where(Shop.id == shop_id))
+    shop = result.scalar_one_or_none()
+    if not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this shop")
+    return shop
+
+
 def _require_approved_shop(shop: Shop) -> None:
     """
     THE fix for the real gap a test run surfaced: previously nothing
@@ -109,25 +164,39 @@ def _require_approved_shop(shop: Shop) -> None:
 
 @router.get("/shops", response_model=list[DashboardShopOut])
 async def my_shops(
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Requires role="shop_owner"/"admin" — this is a deliberate access gate,
-    not just ownership scoping. Becoming a shop_owner is an explicit
-    promotion (see scripts/promote_user.py, or the Admin Panel once Phase
-    6 ships), never something a plain customer account can trigger
-    itself. The frontend checks the user's role BEFORE ever calling this
-    endpoint (see the Shop Dashboard page), so a customer never even
-    reaches the point of getting a 403 here in normal use — but the
-    backend enforces it regardless, since the frontend check alone is
-    never the real security boundary.
+    Requires role="shop_owner"/"admin"/"manager"/"delivery_partner" — this is a
+    deliberate access gate, not just ownership scoping. Becoming a
+    shop_owner is an explicit promotion (self-service application) and
+    becoming staff is an explicit action too (a shop owner creating them
+    via POST /dashboard/staff) — neither is something a plain customer
+    account can trigger itself. The frontend checks the user's role
+    BEFORE ever calling this endpoint (see the Shop Dashboard page), so a
+    customer never even reaches the point of getting a 403 here in
+    normal use — but the backend enforces it regardless, since the
+    frontend check alone is never the real security boundary.
 
-    Returns DashboardShopOut (not the public ShopOut) — an owner
-    genuinely needs to see their own approval_status/docs_status/
-    rejection_reason to know what state their application is in.
+    Returns DashboardShopOut (not the public ShopOut) — an owner (or
+    their staff) genuinely needs to see approval_status/docs_status/
+    rejection_reason to know what state the shop's application is in.
+    A manager/delivery account sees exactly the one shop they're
+    assigned to (via Profile.shop_id), never every shop a customer would
+    see on the public catalog.
     """
-    result = await db.execute(select(Shop).where(Shop.owner_id == user.id))
+    if user.role in STAFF_ROLES:
+        if user.shop_id is None:
+            return []
+        result = await db.execute(select(Shop).where(Shop.id == user.shop_id))
+    else:
+        # Unchanged from before this feature: shop_owner sees the shops
+        # they own; admin's own behavior here is untouched too (admin
+        # oversight of every shop happens via /admin/*, not this
+        # endpoint — this stays scoped to owner_id even for an admin
+        # caller, exactly as it already was).
+        result = await db.execute(select(Shop).where(Shop.owner_id == user.id))
     return result.scalars().all()
 
 
@@ -180,17 +249,18 @@ async def update_my_shop(
 @router.post("/products", response_model=ProductOut)
 async def create_product(
     payload: ProductCreate,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     shop_result = await db.execute(select(Shop).where(Shop.id == payload.shop_id))
     shop = shop_result.scalar_one_or_none()
 
     # The `shop_id` in the request body is NEVER trusted by itself — this
-    # is the check that stops a shop owner from creating a product under
-    # a shop they don't own just by knowing (or guessing) its ID.
-    if not _user_owns_shop(shop, user):
-        raise HTTPException(status_code=403, detail="You don't own this shop")
+    # is the check that stops a shop owner (or their manager) from
+    # creating a product under a shop they don't own/work for just by
+    # knowing (or guessing) its ID.
+    if not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this shop")
     _require_approved_shop(shop)
     # Category-specific required fields (e.g. Pharmacy's
     # prescription_required) live in AttributeSchema, defined by an
@@ -235,16 +305,16 @@ async def create_product(
 @router.get("/products", response_model=list[ProductOut])
 async def my_products(
     shop_id: uuid.UUID | None = Query(default=None),
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
-    owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
+    accessible_shop_ids = await _get_accessible_shop_ids(user, db)
 
     stmt = select(Product)
     if shop_id is not None:
         stmt = stmt.where(Product.shop_id == shop_id)
-    if owned_shop_ids is not None:
-        stmt = stmt.where(Product.shop_id.in_(owned_shop_ids))
+    if accessible_shop_ids is not None:
+        stmt = stmt.where(Product.shop_id.in_(accessible_shop_ids))
 
     result = await db.execute(stmt.order_by(Product.created_at.desc()))
     return result.scalars().all()
@@ -259,8 +329,8 @@ async def _get_owned_product_or_403(product_id: str, user: Profile, db: AsyncSes
 
     shop_result = await db.execute(select(Shop).where(Shop.id == product.shop_id))
     shop = shop_result.scalar_one_or_none()
-    if not _user_owns_shop(shop, user):
-        raise HTTPException(status_code=403, detail="You don't own this product")
+    if not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this product")
     _require_approved_shop(shop)
 
     return product
@@ -270,7 +340,7 @@ async def _get_owned_product_or_403(product_id: str, user: Profile, db: AsyncSes
 async def update_product(
     product_id: str,
     payload: ProductUpdate,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     product = await _get_owned_product_or_403(product_id, user, db)
@@ -303,7 +373,7 @@ async def update_product(
 @router.delete("/products/{product_id}")
 async def deactivate_product(
     product_id: str,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -325,10 +395,10 @@ async def deactivate_product(
 @router.get("/orders", response_model=list[DashboardOrderOut])
 async def incoming_orders(
     shop_id: uuid.UUID | None = Query(default=None),
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
+    accessible_shop_ids = await _get_accessible_shop_ids(user, db)
 
     item_counts = (
         select(OrderItem.order_id, func.sum(OrderItem.quantity).label("item_count"))
@@ -343,8 +413,8 @@ async def incoming_orders(
     )
     if shop_id is not None:
         stmt = stmt.where(Order.shop_id == shop_id)
-    if owned_shop_ids is not None:
-        stmt = stmt.where(Order.shop_id.in_(owned_shop_ids))
+    if accessible_shop_ids is not None:
+        stmt = stmt.where(Order.shop_id.in_(accessible_shop_ids))
 
     result = await db.execute(stmt.order_by(Order.created_at.desc()))
     return [
@@ -358,6 +428,8 @@ async def incoming_orders(
             "buyer_email": buyer_email,
             "buyer_name": buyer_name,
             "item_count": int(item_count or 0),
+            "delivered_at": order.delivered_at,
+            "delivery_proof_photo_url": order.delivery_proof_photo_url,
         }
         for order, buyer_email, buyer_name, item_count in result.all()
     ]
@@ -367,7 +439,7 @@ async def incoming_orders(
 async def update_order_status(
     order_id: str,
     payload: OrderStatusUpdate,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
     oid = parse_uuid_or_404(order_id, "Order")
@@ -378,8 +450,8 @@ async def update_order_status(
 
     shop_result = await db.execute(select(Shop).where(Shop.id == order.shop_id))
     shop = shop_result.scalar_one_or_none()
-    if not _user_owns_shop(shop, user):
-        raise HTTPException(status_code=403, detail="You don't own this order")
+    if not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this order")
     _require_approved_shop(shop)
 
     allowed_next = ALLOWED_TRANSITIONS.get(order.status, set())
@@ -389,7 +461,17 @@ async def update_order_status(
             detail=f'Cannot move an order from "{order.status}" to "{payload.status}"',
         )
 
+    if payload.status in DELIVERY_PROOF_REQUIRED_STATUSES and not (
+        payload.delivery_proof_photo_url and payload.delivery_proof_photo_url.strip()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="A photo of the delivered order is required to mark it as delivered.",
+        )
+
     order.status = payload.status
+    if payload.delivery_proof_photo_url:
+        order.delivery_proof_photo_url = payload.delivery_proof_photo_url
     if payload.status == "delivered":
         # Stamped here, once, the moment the order actually reaches this
         # status — this is what the return/exchange window
@@ -422,23 +504,25 @@ async def update_order_status(
         "buyer_name": buyer_name,
         "item_count": int(item_count),
         "delivered_at": order.delivered_at,
+        "delivery_proof_photo_url": order.delivery_proof_photo_url,
     }
 
 
 @router.get("/summary")
 async def sales_summary(
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Paid-orders-only revenue per shop — a "pending" order hasn't actually
     been paid for yet, and a "payment_failed" one never will be, so
     neither should count toward sales. "Paid" here means any status a
-    paid order can be in (confirmed/preparing/ready/delivered) — see
-    app/core/order_status.py. One GROUP BY query for however many shops
-    the user owns, rather than one query per shop.
+    paid order can be in (confirmed/preparing/packing/out_for_delivery/
+    delivered) — see app/core/order_status.py. One GROUP BY query for
+    however many shops the user (or, for a manager, their one assigned
+    shop) can access, rather than one query per shop.
     """
-    owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
+    accessible_shop_ids = await _get_accessible_shop_ids(user, db)
 
     stmt = (
         select(
@@ -452,8 +536,8 @@ async def sales_summary(
         .select_from(Shop)
         .outerjoin(Order, Order.shop_id == Shop.id)
     )
-    if owned_shop_ids is not None:
-        stmt = stmt.where(Shop.id.in_(owned_shop_ids))
+    if accessible_shop_ids is not None:
+        stmt = stmt.where(Shop.id.in_(accessible_shop_ids))
     stmt = stmt.group_by(Shop.id, Shop.name)
 
     result = await db.execute(stmt)
@@ -471,13 +555,14 @@ async def sales_summary(
 @router.get("/metrics", response_model=DashboardMetrics)
 async def dashboard_metrics(
     shop_id: uuid.UUID = Query(...),
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """Powers the Dashboard home tab: today's headline numbers, the
     7-day revenue chart, top products, and a short recent-orders list —
-    all scoped to one shop the requesting user actually owns."""
-    shop = await _get_owned_shop_or_403(shop_id, user, db)
+    all scoped to one shop the requesting user (owner or their manager)
+    can actually access."""
+    shop = await _get_accessible_shop_or_403(shop_id, user, db)
 
     today_start = _today_start_utc()
     yesterday_start = today_start - timedelta(days=1)
@@ -609,12 +694,12 @@ async def dashboard_metrics(
 @router.get("/analytics", response_model=AnalyticsOut)
 async def dashboard_analytics(
     shop_id: uuid.UUID = Query(...),
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """Powers the Analytics tab: all-time totals plus 7-day order-count
-    and revenue trend series, scoped to one owned shop."""
-    await _get_owned_shop_or_403(shop_id, user, db)
+    and revenue trend series, scoped to one accessible shop."""
+    await _get_accessible_shop_or_403(shop_id, user, db)
 
     totals_result = await db.execute(
         select(
@@ -677,17 +762,16 @@ def _serialize_return(rr: ReturnRequest, **extra) -> dict:
 async def incoming_returns(
     shop_id: uuid.UUID | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Return/exchange requests opened against this shop owner's own shop(s)
-    (or every shop, for an admin) — the shop-side counterpart to
-    routers/returns.py's customer-facing endpoints. Scoped the same way
-    incoming_orders above is: by owned_shop_ids for a shop_owner, or
-    unrestricted (optionally filtered to one shop_id) for an admin.
+    (or every shop, for an admin; or the one assigned shop, for a
+    manager) — the shop-side counterpart to routers/returns.py's
+    customer-facing endpoints.
     """
-    owned_shop_ids = None if user.role == "admin" else await _get_owned_shop_ids(user.id, db)
+    accessible_shop_ids = await _get_accessible_shop_ids(user, db)
 
     stmt = (
         select(ReturnRequest, Product.name, Profile.email, Profile.full_name)
@@ -697,8 +781,8 @@ async def incoming_returns(
     )
     if shop_id is not None:
         stmt = stmt.where(ReturnRequest.shop_id == shop_id)
-    if owned_shop_ids is not None:
-        stmt = stmt.where(ReturnRequest.shop_id.in_(owned_shop_ids))
+    if accessible_shop_ids is not None:
+        stmt = stmt.where(ReturnRequest.shop_id.in_(accessible_shop_ids))
     if status_filter is not None:
         stmt = stmt.where(ReturnRequest.status == status_filter)
 
@@ -713,11 +797,12 @@ async def incoming_returns(
 async def update_return_status(
     return_id: str,
     payload: ReturnStatusUpdate,
-    user: Profile = Depends(require_role("shop_owner", "admin")),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    A shop owner's response to one return/exchange request:
+    A shop owner's (or their manager's) response to one return/exchange
+    request:
 
     - "approved": accepts the request — the customer is told to hand the
       item back (in person, or via whatever pickup process the shop
@@ -760,7 +845,7 @@ async def update_return_status(
     if rr is None:
         raise HTTPException(status_code=404, detail="Return request not found")
 
-    shop = await _get_owned_shop_or_403(rr.shop_id, user, db)
+    shop = await _get_accessible_shop_or_403(rr.shop_id, user, db)
     _require_approved_shop(shop)
 
     allowed_next = SHOP_ALLOWED_TRANSITIONS.get(rr.status, set())
@@ -819,7 +904,7 @@ async def update_return_status(
             # NEW order for the replacement item — so it shows up in the
             # customer's Orders and the shop's Orders/dashboard exactly
             # like anything else they bought, and rides the same
-            # confirmed -> preparing -> ready -> delivered pipeline
+            # confirmed -> preparing -> packing -> out_for_delivery -> delivered pipeline
             # (routers/shop_dashboard.py's update_order_status) instead of
             # needing its own parallel fulfillment tracking. Starts at
             # "confirmed" rather than "pending": there's no separate
@@ -873,3 +958,152 @@ async def update_return_status(
     buyer_email, buyer_name = buyer_result.one()
 
     return _serialize_return(rr, product_name=product_name, buyer_email=buyer_email, buyer_name=buyer_name)
+
+
+# ---------------------------------------------------------------------
+# Staff (manager/delivery) account management — shop_owner/admin only.
+# See app/core/supabase_admin.py for the actual Supabase Admin API calls
+# and app/models/profile.py's `shop_id` column for how a staff member is
+# tied to exactly one shop.
+# ---------------------------------------------------------------------
+
+
+@router.get("/staff", response_model=list[StaffOut])
+async def list_staff(
+    shop_id: uuid.UUID = Query(...),
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Everyone (manager + delivery) currently assigned to one shop the
+    caller owns. A removed staff member's profile row is gone (see
+    remove_staff below), so this never shows anyone who no longer has
+    any relationship to the shop."""
+    await _get_owned_shop_or_403(shop_id, user, db)
+
+    result = await db.execute(
+        select(Profile)
+        .where(Profile.shop_id == shop_id, Profile.role.in_(STAFF_ROLES))
+        .order_by(Profile.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/staff", response_model=StaffOut)
+async def create_staff(
+    payload: StaffCreate,
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Creates a real, working login for a manager or delivery person —
+    not just a database row. Order matters here: the Supabase Auth user
+    is created FIRST (see core/supabase_admin.py); the local `profiles`
+    row is only inserted once that succeeds, using the SAME id Supabase
+    just issued (exactly how every other account's profile row is keyed
+    — see security.py's get_current_user). If the local insert then
+    failed for some reason, we'd have an orphaned Supabase login with no
+    app-side profile; the `except` below cleans that up rather than
+    leaving a half-created account behind.
+
+    Deliberately does NOT go through get_current_user's normal
+    auto-provision path — that path always defaults a brand-new profile
+    to role="customer", which would be wrong here on purpose: this
+    profile needs to start life already scoped to a shop and a role.
+    """
+    shop = await _get_owned_shop_or_403(payload.shop_id, user, db)
+    _require_approved_shop(shop)
+
+    existing = await db.execute(select(Profile).where(Profile.email == payload.email))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail="An account with this email already exists.")
+
+    new_user_id = await create_supabase_user(payload.email, payload.password, payload.full_name)
+
+    try:
+        profile = Profile(
+            id=uuid.UUID(new_user_id),
+            email=payload.email,
+            full_name=payload.full_name,
+            role=payload.staff_role,
+            shop_id=shop.id,
+        )
+        db.add(profile)
+        await db.commit()
+        await db.refresh(profile)
+    except Exception:
+        await db.rollback()
+        await delete_supabase_user(new_user_id)
+        raise HTTPException(status_code=500, detail="Couldn't finish creating this staff account.")
+
+    return profile
+
+
+@router.patch("/staff/{staff_id}", response_model=StaffOut)
+async def update_staff(
+    staff_id: str,
+    payload: StaffUpdate,
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suspend/reactivate, promote/demote between manager<->delivery,
+    edit their name, or reset their password — see StaffUpdate for why
+    every field is optional. Suspending reuses `Profile.is_suspended`,
+    the SAME flag the Admin Panel's "Suspend user" action sets — a
+    suspended staff account is locked out on its very next request via
+    security.py's get_current_user, identically to a suspended customer
+    or shop owner."""
+    sid = parse_uuid_or_404(staff_id, "Staff member")
+    result = await db.execute(select(Profile).where(Profile.id == sid))
+    staff = result.scalar_one_or_none()
+    if staff is None or staff.role not in STAFF_ROLES:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+    shop_result = await db.execute(select(Shop).where(Shop.id == staff.shop_id))
+    shop = shop_result.scalar_one_or_none()
+    if not _user_owns_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't own this staff member's shop")
+
+    if payload.new_password:
+        await update_supabase_user_password(str(staff.id), payload.new_password)
+
+    updates = payload.model_dump(exclude={"new_password"}, exclude_unset=True)
+    for key, value in updates.items():
+        field = "role" if key == "staff_role" else key
+        setattr(staff, field, value)
+
+    await db.commit()
+    await db.refresh(staff)
+    return staff
+
+
+@router.delete("/staff/{staff_id}")
+async def remove_staff(
+    staff_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Removes a staff member for good: deletes their Supabase Auth login
+    (so they genuinely can't sign in anywhere anymore, not just here)
+    and their `profiles` row. Deliberately a hard delete, unlike
+    products' soft-delete pattern — a staff account has no order/return
+    history of its own referencing it (orders reference the CUSTOMER's
+    profile, never the delivery person who marked a status), so there's
+    nothing a hard delete would orphan.
+    """
+    sid = parse_uuid_or_404(staff_id, "Staff member")
+    result = await db.execute(select(Profile).where(Profile.id == sid))
+    staff = result.scalar_one_or_none()
+    if staff is None or staff.role not in STAFF_ROLES:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+    shop_result = await db.execute(select(Shop).where(Shop.id == staff.shop_id))
+    shop = shop_result.scalar_one_or_none()
+    if not _user_owns_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't own this staff member's shop")
+
+    await delete_supabase_user(str(staff.id))
+    await db.delete(staff)
+    await db.commit()
+
+    return {"id": staff_id, "removed": True}

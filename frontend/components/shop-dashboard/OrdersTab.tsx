@@ -2,23 +2,35 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
-import { DashboardOrder, STATUS_TRANSITIONS, formatINR, statusMeta, timeAgo } from "./types";
+import { useAuth } from "@/contexts/AuthContext";
+import { uploadDeliveryProof } from "@/lib/deliveryProofUpload";
+import { DashboardOrder, PROOF_REQUIRED_STATUSES, STATUS_TRANSITIONS, formatINR, statusMeta, timeAgo } from "./types";
 
 const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
   { key: "all", label: "All" },
   { key: "confirmed", label: "Pending", statuses: ["confirmed"] },
   { key: "preparing", label: "Preparing", statuses: ["preparing"] },
-  { key: "ready", label: "Ready", statuses: ["ready"] },
+  { key: "packing", label: "Packing", statuses: ["packing"] },
+  { key: "out_for_delivery", label: "Out for Delivery", statuses: ["out_for_delivery"] },
   { key: "delivered", label: "Delivered", statuses: ["delivered"] },
 ];
 
 export function OrdersTab({ shopId }: { shopId: string }) {
+  const { profile } = useAuth();
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // The order currently in the "take a delivery photo" modal — separate
+  // from updatingId, since opening this modal doesn't call the API yet.
+  const [proofOrder, setProofOrder] = useState<DashboardOrder | null>(null);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [submittingProof, setSubmittingProof] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -38,24 +50,67 @@ export function OrdersTab({ shopId }: { shopId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);
 
-  async function accept(order: DashboardOrder) {
-    // Every actionable order only ever has ONE possible next step — see
-    // STATUS_TRANSITIONS. There is no reject/cancel action offered here
-    // by design: once an order is paid and in the queue, the shop
-    // accepts it and moves it forward.
+  async function advance(order: DashboardOrder, proofPhotoUrl?: string) {
     const next = STATUS_TRANSITIONS[order.status]?.next;
     if (!next) return;
     setUpdatingId(order.id);
     try {
       await apiFetch(`/dashboard/orders/${order.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status: next }),
+        body: JSON.stringify({ status: next, delivery_proof_photo_url: proofPhotoUrl ?? null }),
       });
       await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  function accept(order: DashboardOrder) {
+    // Every actionable order only ever has ONE possible next step — see
+    // STATUS_TRANSITIONS. There is no reject/cancel action offered here
+    // by design: once an order is paid and in the queue, the shop
+    // accepts it and moves it forward. The one exception is the final
+    // "delivered" step, which needs a proof photo first — that opens a
+    // modal instead of calling the API straight away.
+    const next = STATUS_TRANSITIONS[order.status]?.next;
+    if (next && PROOF_REQUIRED_STATUSES.has(next)) {
+      setProofOrder(order);
+      setProofFile(null);
+      setProofPreview(null);
+      setProofError(null);
+      return;
+    }
+    advance(order);
+  }
+
+  function closeProofModal() {
+    if (proofPreview) URL.revokeObjectURL(proofPreview);
+    setProofOrder(null);
+    setProofFile(null);
+    setProofPreview(null);
+    setProofError(null);
+  }
+
+  function pickProofFile(file: File | null) {
+    if (proofPreview) URL.revokeObjectURL(proofPreview);
+    setProofFile(file);
+    setProofPreview(file ? URL.createObjectURL(file) : null);
+  }
+
+  async function submitProof() {
+    if (!proofOrder || !proofFile || !profile) return;
+    setSubmittingProof(true);
+    setProofError(null);
+    try {
+      const url = await uploadDeliveryProof(profile.id, proofFile);
+      await advance(proofOrder, url);
+      closeProofModal();
+    } catch (err) {
+      setProofError((err as Error).message);
+    } finally {
+      setSubmittingProof(false);
     }
   }
 
@@ -143,6 +198,16 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${meta.className}`}>
                           {meta.label}
                         </span>
+                        {o.delivery_proof_photo_url && (
+                          <a
+                            href={o.delivery_proof_photo_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block text-[11px] text-blue-500 underline mt-1"
+                          >
+                            View proof photo
+                          </a>
+                        )}
                       </td>
                       <td className="px-5 py-3 text-gray-400">{timeAgo(o.created_at)}</td>
                       <td className="px-5 py-3">
@@ -166,6 +231,64 @@ export function OrdersTab({ shopId }: { shopId: string }) {
           </div>
         )}
       </div>
+
+      {proofOrder && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">Confirm delivery</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Take or upload a photo of the order at the doorstep as proof of delivery for order #
+                {proofOrder.id.slice(0, 8)}.
+              </p>
+            </div>
+
+            {proofPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={proofPreview} alt="Delivery proof preview" className="w-full h-48 object-cover rounded-lg" />
+            ) : (
+              <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-gray-200 rounded-lg cursor-pointer text-sm text-gray-400 gap-1">
+                <span>Tap to take or choose a photo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => pickProofFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
+
+            {proofPreview && (
+              <button
+                onClick={() => pickProofFile(null)}
+                className="text-xs font-medium text-gray-500 underline"
+              >
+                Choose a different photo
+              </button>
+            )}
+
+            {proofError && <p className="text-sm text-red-500">{proofError}</p>}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={closeProofModal}
+                disabled={submittingProof}
+                className="text-sm font-medium text-gray-600 px-4 py-2 rounded-lg disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitProof}
+                disabled={!proofFile || submittingProof}
+                className="bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2 disabled:opacity-50"
+              >
+                {submittingProof ? "Marking delivered…" : "Mark Delivered"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

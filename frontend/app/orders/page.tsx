@@ -11,7 +11,8 @@ const STATUS_LABEL: Record<string, string> = {
   confirmed: "Confirmed",
   payment_failed: "Payment failed",
   preparing: "Preparing",
-  ready: "Out for delivery",
+  packing: "Packing your order",
+  out_for_delivery: "Out for delivery",
   delivered: "Delivered",
 };
 

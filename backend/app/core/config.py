@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     # using the newer asymmetric key scheme (ES256), e.g. https://xxxx.supabase.co
     supabase_url: str = ""
 
+    # Supabase Dashboard -> Settings -> API -> "service_role" secret key.
+    # ONLY ever used server-side (see core/supabase_admin.py) to create a
+    # staff (manager/delivery) login on a shop owner's behalf — the one
+    # place this app creates an account without the person signing
+    # themselves up. Never sent to the frontend, never logged. Optional:
+    # an empty value just means staff-account creation returns a clear
+    # 500 instead of silently working, so local dev without this set
+    # doesn't need to touch it unless that feature is actually used.
+    supabase_service_role_key: str = ""
+
     # Which frontend origin(s) are allowed to call this API (CORS).
     # Comma-separated so staging and prod can be listed together, e.g.
     # "https://app.localmart.com,https://staging.localmart.com" — see

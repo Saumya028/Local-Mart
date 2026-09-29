@@ -20,6 +20,11 @@ alembic==1.13.2
 pyjwt[crypto]==2.13.0
 razorpay==2.0.1
 
+# Staff (manager/delivery) account creation calls Supabase's Admin REST
+# API directly (core/supabase_admin.py) — no official async Supabase
+# admin SDK, so a plain async HTTP client is all that's actually needed.
+httpx==0.27.2
+
 # Phase 7 — observability. Optional at runtime (core/observability.py is
 # a no-op without SENTRY_DSN set), but the package still needs to be
 # installed for that no-op check to even happen safely.

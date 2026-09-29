@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { AdminUser, UsersSummary } from "./types";
 
-const ROLES = ["customer", "shop_owner", "delivery_partner", "admin"] as const;
+const ROLES = ["customer", "shop_owner", "manager", "delivery_partner", "admin"] as const;
 
 const ROLE_LABELS: Record<string, string> = {
   customer: "Customer",
   shop_owner: "Shop Owner",
+  manager: "Manager",
   delivery_partner: "Delivery Partner",
   admin: "Admin",
 };
@@ -16,6 +17,7 @@ const ROLE_LABELS: Record<string, string> = {
 const ROLE_BADGE: Record<string, string> = {
   customer: "bg-gray-100 text-gray-600",
   shop_owner: "bg-blue-50 text-blue-600",
+  manager: "bg-teal-50 text-teal-600",
   delivery_partner: "bg-violet-50 text-violet-600",
   admin: "bg-amber-50 text-amber-600",
 };
@@ -47,7 +49,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
 
   async function changeRole(user: AdminUser, role: string) {
     if (role === user.role) return;
-    if (role === "admin" && !window.confirm(`Grant ${user.email} full admin access?`)) return;
+    if (role === "admin" && !window.confirm(`Grant ${user.email ?? "this account"} full admin access?`)) return;
 
     setSavingId(user.id);
     try {
@@ -61,7 +63,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
   }
 
   async function toggleSuspend(user: AdminUser) {
-    if (!user.is_suspended && !window.confirm(`Suspend ${user.email}? They won't be able to use their account.`)) {
+    if (!user.is_suspended && !window.confirm(`Suspend ${user.email ?? "this account"}? They won't be able to use their account.`)) {
       return;
     }
     setSavingId(user.id);
@@ -116,7 +118,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
           <tbody>
             {users.map((u) => {
               const isSelf = u.id === selfId;
-              const initials = (u.full_name ?? u.email)
+              const initials = (u.full_name ?? u.email ?? "?")
                 .split(" ")
                 .map((p) => p[0])
                 .filter(Boolean)
@@ -135,7 +137,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
                       </span>
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-gray-500">{u.email}</td>
+                  <td className="px-5 py-3 text-gray-500">{u.email ?? "—"}</td>
                   <td className="px-5 py-3">
                     <select
                       value={u.role}

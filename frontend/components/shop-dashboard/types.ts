@@ -41,6 +41,8 @@ export type DashboardOrder = {
   buyer_name: string | null;
   item_count: number;
   created_at: string;
+  delivered_at: string | null;
+  delivery_proof_photo_url: string | null;
 };
 
 export type ReturnRequestType = "return" | "exchange";
@@ -102,6 +104,22 @@ export function returnStatusMeta(status: string) {
 
 export type Summary = { shop_id: string; shop_name: string; confirmed_orders: number; revenue: string };
 
+// Staff (manager/delivery) accounts — see StaffTab.tsx. `role` is
+// always "manager" or "delivery_partner" here (the backend never returns a
+// customer/shop_owner/admin profile from GET /dashboard/staff).
+export type StaffMember = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string;
+  is_suspended: boolean;
+  created_at: string;
+};
+
+export function staffRoleLabel(role: string): string {
+  return role === "manager" ? "Manager" : role === "delivery_partner" ? "Delivery" : role;
+}
+
 export type DayPoint = { label: string; date: string; value: string };
 
 export type TopProduct = { id: string; name: string; units_sold: number; revenue: string };
@@ -147,9 +165,15 @@ export type Analytics = {
 // "cancelled" — there is no reject/cancel action anywhere in this UI.
 export const STATUS_TRANSITIONS: Record<string, { next: string; label: string }> = {
   confirmed: { next: "preparing", label: "Accept" },
-  preparing: { next: "ready", label: "Mark Ready" },
-  ready: { next: "delivered", label: "Mark Delivered" },
+  preparing: { next: "packing", label: "Start Packing" },
+  packing: { next: "out_for_delivery", label: "Out for Delivery" },
+  out_for_delivery: { next: "delivered", label: "Mark Delivered" },
 };
+
+// Statuses whose transition requires a delivery-proof photo first (see
+// OrdersTab's photo-capture modal) — mirrors the backend's
+// DELIVERY_PROOF_REQUIRED_STATUSES.
+export const PROOF_REQUIRED_STATUSES = new Set(["delivered"]);
 
 // Display labels + badge colors for every status an order can be in.
 // "confirmed" is shown as "Pending" — from the shop's point of view, a
@@ -159,7 +183,8 @@ export const STATUS_META: Record<string, { label: string; className: string }> =
   pending: { label: "Awaiting payment", className: "bg-gray-100 text-gray-500" },
   confirmed: { label: "Pending", className: "bg-amber-100 text-amber-700" },
   preparing: { label: "Preparing", className: "bg-blue-100 text-blue-700" },
-  ready: { label: "Ready", className: "bg-violet-100 text-violet-700" },
+  packing: { label: "Packing", className: "bg-indigo-100 text-indigo-700" },
+  out_for_delivery: { label: "Out for Delivery", className: "bg-violet-100 text-violet-700" },
   delivered: { label: "Delivered", className: "bg-emerald-100 text-emerald-700" },
   payment_failed: { label: "Payment failed", className: "bg-red-100 text-red-700" },
   cancelled: { label: "Cancelled", className: "bg-red-100 text-red-700" },

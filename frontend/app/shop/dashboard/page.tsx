@@ -13,6 +13,7 @@ import { ReturnsTab } from "@/components/shop-dashboard/ReturnsTab";
 import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
+import { StaffTab } from "@/components/shop-dashboard/StaffTab";
 import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
 import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
@@ -27,6 +28,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   products: "Products",
   inventory: "Inventory",
   analytics: "Analytics",
+  staff: "Staff",
 };
 
 export default function ShopDashboardPage() {
@@ -40,7 +42,13 @@ export default function ShopDashboardPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
 
-  const canSell = profile?.role === "shop_owner" || profile?.role === "admin";
+  // A manager/delivery account is staff — created BY a shop owner (see
+  // the new Staff tab), never self-service, and scoped to exactly one
+  // shop via Profile.shop_id rather than Shop.owner_id. Both still
+  // reach this same dashboard page; Sidebar (via tabsForRole) is what
+  // actually narrows which tabs each of them sees.
+  const isStaff = profile?.role === "manager" || profile?.role === "delivery_partner";
+  const canAccessDashboard = profile?.role === "shop_owner" || profile?.role === "admin" || isStaff;
 
   async function loadShops() {
     try {
@@ -61,12 +69,24 @@ export default function ShopDashboardPage() {
     // a customer navigating here directly never even triggers a 403,
     // because we never ask the backend a question we already know the
     // answer to on the frontend.
-    if (canSell) {
+    if (canAccessDashboard) {
       loadShops();
     } else if (!authLoading) {
       setLoadingShops(false);
     }
-  }, [canSell, authLoading]);
+  }, [canAccessDashboard, authLoading]);
+
+  // A delivery hire's whole job is Orders — Sidebar hides every other
+  // tab for that role anyway, but this avoids them landing on a blank
+  // "Dashboard" tab they can't see a nav link for. Guarded so it only
+  // fires once, right after the role first resolves, never overriding
+  // a tab the person then deliberately switches to.
+  useEffect(() => {
+    if (profile?.role === "delivery_partner" && tab === "dashboard") {
+      setTab("orders");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.role]);
 
   // Applying to sell is self-service (see POST /shops) — a guest just
   // needs to be signed in first, not turned away. setPostLoginRedirect
@@ -115,7 +135,7 @@ export default function ShopDashboardPage() {
     };
   }, [selectedShopId, tab, shops]);
 
-  if (authLoading || !loggedIn || (canSell && loadingShops)) {
+  if (authLoading || !loggedIn || (canAccessDashboard && loadingShops)) {
     // Covers auth still resolving, AND the brief moment before the
     // effect above sends a guest on to /login — never a dead end.
     return (
@@ -131,8 +151,29 @@ export default function ShopDashboardPage() {
   // shop_owner (see POST /shops). The same form covers an
   // already-promoted account that just doesn't have a shop yet (e.g.
   // right after their first application, or an existing owner/admin
-  // adding another shop).
-  if (!canSell || shops.length === 0) {
+  // adding another shop). A staff account (manager/delivery) never
+  // sees this form at all — they can't self-service a shop, only an
+  // owner can create/assign them one (see the Staff tab).
+  if (!canAccessDashboard) {
+    return (
+      <main className="max-w-lg mx-auto px-6 py-10">
+        <ApplyForm userId={profile!.id} onCreated={handleShopApplied} loadError={error} />
+      </main>
+    );
+  }
+
+  if (shops.length === 0) {
+    if (isStaff) {
+      return (
+        <main className="max-w-lg mx-auto px-6 py-16 text-center">
+          <h1 className="text-xl font-semibold text-gray-900">No shop assigned</h1>
+          <p className="text-sm text-gray-500 mt-2">
+            Your account isn&apos;t currently linked to a shop. Ask the shop owner who set up
+            your account to add you again from their Staff tab.
+          </p>
+        </main>
+      );
+    }
     return (
       <main className="max-w-lg mx-auto px-6 py-10">
         <ApplyForm userId={profile!.id} onCreated={handleShopApplied} loadError={error} />
@@ -159,6 +200,7 @@ export default function ShopDashboardPage() {
           onSelectTab={setTab}
           pendingCount={0}
           pendingReturnsCount={0}
+          role={profile?.role}
         />
         <div className="flex-1 overflow-y-auto">
           <ShopStatusScreen shop={selectedShop} userId={profile!.id} onUpdated={loadShops} />
@@ -177,6 +219,7 @@ export default function ShopDashboardPage() {
         onSelectTab={setTab}
         pendingCount={pendingCount}
         pendingReturnsCount={pendingReturnsCount}
+        role={profile?.role}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar title={TAB_TITLES[tab]} name={profile?.full_name ?? profile?.email ?? null} />
@@ -189,6 +232,7 @@ export default function ShopDashboardPage() {
           {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
           {selectedShopId && tab === "analytics" && <AnalyticsTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "staff" && <StaffTab shopId={selectedShopId} />}
         </div>
       </div>
     </div>

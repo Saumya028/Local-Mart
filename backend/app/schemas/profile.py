@@ -21,6 +21,10 @@ class ProfileOut(BaseModel):
     phone: str | None
     role: str
     created_at: datetime
+    # Only ever set for a staff account (role="manager"/"delivery_partner") —
+    # see models/profile.py. The frontend uses this so a staff member's
+    # dashboard knows which shop to load without a separate lookup.
+    shop_id: uuid.UUID | None = None
 
 
 class ProfileUpdate(BaseModel):

@@ -47,18 +47,21 @@ export default function Header() {
     return null;
   }
 
-  // "Sell" only shows for accounts that can actually use it. A plain
-  // customer never even sees the link — this is a UX nicety, not the
-  // real security boundary (the backend enforces that independently via
-  // require_role on every dashboard/shop-creation endpoint), but there's
-  // no reason to dangle a link in front of someone that just 403s.
-  const canSell = profile?.role === "shop_owner" || profile?.role === "admin";
+  // "Sell" is a universal entry point now, not just for accounts that
+  // are already shop_owner/admin — applying to sell is self-service
+  // (see POST /shops), so even a guest or a plain customer clicking it
+  // is a legitimate flow, not a dead end. /shop/dashboard itself is what
+  // sends a guest to log in first, then straight back into the apply
+  // form once they do.
   const isAdmin = profile?.role === "admin";
 
   const navLinks = [
     { href: "/search", label: "Search" },
     { href: "/stores", label: "Stores" },
-    ...(canSell ? [{ href: "/shop/dashboard", label: "Sell" }] : []),
+    {
+      href: "/shop/dashboard",
+      label: ["shop_owner", "admin", "manager", "delivery_partner"].includes(profile?.role ?? "") ? "Dashboard" : "Sell",
+    },
     ...(isAdmin ? [{ href: "/admin", label: "Admin" }] : []),
     { href: "/cart", label: "Cart" },
     { href: "/profile", label: "My Account" },
