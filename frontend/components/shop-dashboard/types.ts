@@ -15,6 +15,12 @@ export type Shop = {
   city: string | null;
   latitude: number | null;
   longitude: number | null;
+  // Owner-toggleable "Pick up from the shop" switch — see Sidebar.tsx's
+  // shop card. True by default (every shop offers pickup unless the
+  // owner turns it off), but checkout also independently requires
+  // address_line1 to be set before actually offering pickup to a
+  // customer.
+  pickup_enabled: boolean;
 };
 
 export type Product = {
@@ -35,8 +41,13 @@ export type DashboardOrder = {
   id: string;
   shop_id: string;
   status: string;
+  // "delivery" or "pickup" — see Order.fulfillment_type on the backend.
+  // Decides which of STATUS_TRANSITIONS_BY_FULFILLMENT below an order
+  // follows and whether delivery_address or the shop's own address is
+  // what's shown.
+  fulfillment_type: string;
   total_amount: string;
-  delivery_address: string;
+  delivery_address: string | null;
   buyer_email: string;
   buyer_name: string | null;
   item_count: number;
@@ -158,27 +169,43 @@ export type Analytics = {
   revenue_by_day: DayPoint[];
 };
 
-// Mirrors the backend's ALLOWED_TRANSITIONS in app/core/order_status.py —
-// kept here purely to decide which action button to show; the backend is
-// what actually enforces this, so a mismatch here is a UI annoyance at
-// worst, never a security gap. Deliberately no entry ever leads to
+// Mirrors the backend's two transition tables in
+// app/core/order_status.py (DELIVERY_TRANSITIONS/PICKUP_TRANSITIONS) —
+// kept here purely to decide which action button to show; the backend
+// is what actually enforces this, so a mismatch here is a UI annoyance
+// at worst, never a security gap. Deliberately no entry ever leads to
 // "cancelled" — there is no reject/cancel action anywhere in this UI.
-export const STATUS_TRANSITIONS: Record<string, { next: string; label: string }> = {
+export const DELIVERY_STATUS_TRANSITIONS: Record<string, { next: string; label: string }> = {
   confirmed: { next: "preparing", label: "Accept" },
   preparing: { next: "packing", label: "Start Packing" },
   packing: { next: "out_for_delivery", label: "Out for Delivery" },
   out_for_delivery: { next: "delivered", label: "Mark Delivered" },
 };
 
+export const PICKUP_STATUS_TRANSITIONS: Record<string, { next: string; label: string }> = {
+  confirmed: { next: "preparing", label: "Accept" },
+  preparing: { next: "packing", label: "Start Packing" },
+  packing: { next: "ready_for_pickup", label: "Ready for Pickup" },
+  ready_for_pickup: { next: "picked_up", label: "Mark Picked Up" },
+};
+
+export function transitionsForFulfillment(
+  fulfillmentType: string
+): Record<string, { next: string; label: string }> {
+  return fulfillmentType === "pickup" ? PICKUP_STATUS_TRANSITIONS : DELIVERY_STATUS_TRANSITIONS;
+}
+
 // Statuses whose transition requires a delivery-proof photo first (see
 // OrdersTab's photo-capture modal) — mirrors the backend's
-// DELIVERY_PROOF_REQUIRED_STATUSES.
+// DELIVERY_PROOF_REQUIRED_STATUSES. Deliberately just "delivered" —
+// "picked_up" needs no photo, since the shop's own staff hands the
+// order over in person and IS the witness.
 export const PROOF_REQUIRED_STATUSES = new Set(["delivered"]);
 
-// Display labels + badge colors for every status an order can be in.
-// "confirmed" is shown as "Pending" — from the shop's point of view, a
-// confirmed (paid) order that hasn't been accepted yet IS the thing
-// they're waiting to act on.
+// Display labels + badge colors for every status an order can be in,
+// across BOTH fulfillment types. "confirmed" is shown as "Pending" —
+// from the shop's point of view, a confirmed (paid) order that hasn't
+// been accepted yet IS the thing they're waiting to act on.
 export const STATUS_META: Record<string, { label: string; className: string }> = {
   pending: { label: "Awaiting payment", className: "bg-gray-100 text-gray-500" },
   confirmed: { label: "Pending", className: "bg-amber-100 text-amber-700" },
@@ -186,6 +213,8 @@ export const STATUS_META: Record<string, { label: string; className: string }> =
   packing: { label: "Packing", className: "bg-indigo-100 text-indigo-700" },
   out_for_delivery: { label: "Out for Delivery", className: "bg-violet-100 text-violet-700" },
   delivered: { label: "Delivered", className: "bg-emerald-100 text-emerald-700" },
+  ready_for_pickup: { label: "Ready for Pickup", className: "bg-violet-100 text-violet-700" },
+  picked_up: { label: "Picked Up", className: "bg-emerald-100 text-emerald-700" },
   payment_failed: { label: "Payment failed", className: "bg-red-100 text-red-700" },
   cancelled: { label: "Cancelled", className: "bg-red-100 text-red-700" },
 };

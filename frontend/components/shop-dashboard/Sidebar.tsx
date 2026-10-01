@@ -130,6 +130,8 @@ export function Sidebar({
   pendingCount,
   pendingReturnsCount = 0,
   role,
+  onTogglePickup,
+  togglingPickup = false,
 }: {
   shop: Shop | null;
   shops: Shop[];
@@ -139,6 +141,13 @@ export function Sidebar({
   pendingCount: number;
   pendingReturnsCount?: number;
   role?: string;
+  // Owner/admin-only "Pick up from the shop" switch — omitted (and the
+  // toggle hidden) for a manager/delivery_partner viewer, who can see
+  // this shop's dashboard but never edit its settings. Undefined rather
+  // than a no-op function so that omission is enforced at the type
+  // level, not just by convention.
+  onTogglePickup?: (next: boolean) => void;
+  togglingPickup?: boolean;
 }) {
   const visible = new Set(tabsForRole(role));
   const items = NAV.filter((item) => visible.has(item.key));
@@ -176,6 +185,22 @@ export function Sidebar({
           <span className={`w-1.5 h-1.5 rounded-full inline-block ${statusDot(shop)}`} />
           {statusLabel(shop)}
         </p>
+        {onTogglePickup && shop && (
+          <label className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-200/70 cursor-pointer">
+            <span className="text-[11px] text-gray-500">Pickup from shop</span>
+            <span className="relative inline-flex">
+              <input
+                type="checkbox"
+                checked={shop.pickup_enabled}
+                disabled={togglingPickup}
+                onChange={(e) => onTogglePickup(e.target.checked)}
+                className="sr-only peer"
+              />
+              <span className="w-8 h-4.5 bg-gray-200 peer-checked:bg-blue-600 rounded-full transition-colors peer-disabled:opacity-50" />
+              <span className="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-3.5" />
+            </span>
+          </label>
+        )}
       </div>
 
       <nav className="flex-1 px-3 space-y-1">

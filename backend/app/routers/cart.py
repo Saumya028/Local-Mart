@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import cart as cart_store
 from app.core.db import get_db
 from app.core.security import get_current_user
-from app.models import Product, Profile
+from app.models import Product, Profile, Shop
 from app.schemas.product import ProductOut
 
 router = APIRouter(prefix="/cart", tags=["cart"])
@@ -48,6 +48,10 @@ async def get_cart(
     result = await db.execute(select(Product).where(Product.id.in_(product_ids)))
     products_by_id = {str(p.id): p for p in result.scalars().all()}
 
+    shop_ids = {p.shop_id for p in products_by_id.values()}
+    shops_result = await db.execute(select(Shop).where(Shop.id.in_(shop_ids)))
+    shops_by_id = {s.id: s for s in shops_result.scalars().all()}
+
     items = []
     total = 0
     for product_id, qty in raw_items.items():
@@ -58,11 +62,26 @@ async def get_cart(
             continue
         subtotal = product.price * qty
         total += subtotal
+        shop = shops_by_id.get(product.shop_id)
         items.append(
             {
                 "product": ProductOut.model_validate(product).model_dump(mode="json"),
                 "quantity": qty,
                 "subtotal": str(subtotal),
+                # Lets the Cart/Checkout pages group items by shop and
+                # offer "Pick up from the shop" per shop without a
+                # separate round trip — see frontend/app/checkout/page.tsx.
+                # Only pickup_enabled AND address_line1 together mean
+                # pickup is actually offerable (see Shop.pickup_enabled).
+                "shop": {
+                    "id": str(shop.id),
+                    "name": shop.name,
+                    "pickup_enabled": shop.pickup_enabled,
+                    "address_line1": shop.address_line1,
+                    "city": shop.city,
+                }
+                if shop is not None
+                else None,
             }
         )
 

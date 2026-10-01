@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
 from app.core.db import get_db
-from app.core.order_status import ALLOWED_TRANSITIONS, DELIVERY_PROOF_REQUIRED_STATUSES, RECOGNIZED_STATUSES
+from app.core.order_status import (
+    DELIVERY_PROOF_REQUIRED_STATUSES,
+    RECOGNIZED_STATUSES,
+    TERMINAL_STATUSES,
+    allowed_transitions_for,
+)
 from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
 from app.core.security import require_role
 from app.core.supabase_admin import (
@@ -43,13 +48,15 @@ STAFF_ROLES = ("manager", "delivery_partner")
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# See app/core/order_status.py for the transition table and the
-# "recognized" (paid) statuses — both are shared with admin.py so
-# platform-wide metrics and this dashboard never drift apart on what
-# counts as a real sale. Note in particular: ALLOWED_TRANSITIONS has no
-# entry leading to "cancelled" anywhere — there is no reject/cancel
-# action a shop owner can take here, by design. The only forward path
-# is confirmed ("Pending" in the UI) -> preparing -> packing -> out_for_delivery -> delivered.
+# See app/core/order_status.py for the two transition tables (delivery
+# vs. pickup) and the "recognized" (paid) statuses — both are shared
+# with admin.py so platform-wide metrics and this dashboard never drift
+# apart on what counts as a real sale. Note in particular: neither table
+# has an entry leading to "cancelled" anywhere — there is no
+# reject/cancel action a shop owner can take here, by design. The only
+# forward path is confirmed ("Pending" in the UI) -> preparing ->
+# packing -> out_for_delivery -> delivered (delivery) or -> packing ->
+# ready_for_pickup -> picked_up (pickup).
 
 DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -422,6 +429,7 @@ async def incoming_orders(
             "id": order.id,
             "shop_id": order.shop_id,
             "status": order.status,
+            "fulfillment_type": order.fulfillment_type,
             "total_amount": order.total_amount,
             "delivery_address": order.delivery_address,
             "created_at": order.created_at,
@@ -454,7 +462,7 @@ async def update_order_status(
         raise HTTPException(status_code=403, detail="You don't have access to this order")
     _require_approved_shop(shop)
 
-    allowed_next = ALLOWED_TRANSITIONS.get(order.status, set())
+    allowed_next = allowed_transitions_for(order.fulfillment_type).get(order.status, set())
     if payload.status not in allowed_next:
         raise HTTPException(
             status_code=400,
@@ -472,12 +480,13 @@ async def update_order_status(
     order.status = payload.status
     if payload.delivery_proof_photo_url:
         order.delivery_proof_photo_url = payload.delivery_proof_photo_url
-    if payload.status == "delivered":
-        # Stamped here, once, the moment the order actually reaches this
-        # status — this is what the return/exchange window
-        # (app/core/return_status.py's RETURN_WINDOW) counts from. Using
-        # created_at instead would unfairly shrink a customer's return
-        # window by however long the order took to actually arrive.
+    if payload.status in TERMINAL_STATUSES:
+        # Stamped here, once, the moment the order actually reaches
+        # EITHER terminal status ("delivered" or "picked_up") — this is
+        # what the return/exchange window (app/core/return_status.py's
+        # RETURN_WINDOW) counts from. Using created_at instead would
+        # unfairly shrink a customer's return window by however long the
+        # order took to actually reach them.
         order.delivered_at = datetime.now(timezone.utc)
     await db.commit()
 
@@ -497,6 +506,7 @@ async def update_order_status(
         "id": order.id,
         "shop_id": order.shop_id,
         "status": order.status,
+        "fulfillment_type": order.fulfillment_type,
         "total_amount": order.total_amount,
         "delivery_address": order.delivery_address,
         "created_at": order.created_at,

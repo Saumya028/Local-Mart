@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
 
-type Order = { id: string; status: string; total_amount: string; created_at: string };
+type Order = { id: string; status: string; fulfillment_type: string; total_amount: string; created_at: string };
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Payment pending",
@@ -14,6 +14,8 @@ const STATUS_LABEL: Record<string, string> = {
   packing: "Packing your order",
   out_for_delivery: "Out for delivery",
   delivered: "Delivered",
+  ready_for_pickup: "Ready for pickup",
+  picked_up: "Picked up",
 };
 
 export default function OrdersPage() {
@@ -71,7 +73,10 @@ export default function OrdersPage() {
                 </p>
               </div>
               <div className="flex items-center justify-between mt-1">
-                <p className="text-xs text-gray-500">{STATUS_LABEL[o.status] ?? o.status}</p>
+                <p className="text-xs text-gray-500">
+                  {STATUS_LABEL[o.status] ?? o.status}
+                  {o.fulfillment_type === "pickup" && " · Pickup"}
+                </p>
                 <p className="text-sm font-semibold">₹{o.total_amount}</p>
               </div>
             </Link>

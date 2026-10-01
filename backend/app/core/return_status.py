@@ -27,10 +27,12 @@ RETURN_WINDOW = timedelta(days=7)
 
 REQUEST_TYPES: tuple[str, ...] = ("return", "exchange")
 
-# Every order status a return/exchange may be opened against. Deliberately
-# just "delivered" — a pending/confirmed/preparing/ready order hasn't
-# reached the customer yet, so there's nothing to return.
-RETURN_ELIGIBLE_ORDER_STATUSES: set[str] = {"delivered"}
+# Every order status a return/exchange may be opened against.
+# Deliberately just the two terminal states (see
+# app/core/order_status.py's TERMINAL_STATUSES) — any earlier status,
+# for either fulfillment type, hasn't reached the customer yet, so
+# there's nothing to return.
+RETURN_ELIGIBLE_ORDER_STATUSES: set[str] = {"delivered", "picked_up"}
 
 # Forward-only transitions a SHOP OWNER may make via
 # PATCH /dashboard/returns/{id}/status.

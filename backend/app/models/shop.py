@@ -54,6 +54,14 @@ class Shop(Base):
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
 
     rating: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    # Owner-toggleable (Shop Dashboard sidebar) — whether this shop's
+    # storefront/cart/checkout offer "Pick up from the shop" at all. True
+    # by default so every existing shop keeps offering it unless the
+    # owner turns it off; also gated at checkout time on the shop
+    # actually having an address_line1 on file (see routers/orders.py's
+    # checkout) — a shop with no address has nowhere for a customer to
+    # go pick up from.
+    pickup_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # Admin can deactivate a shop (Phase 6) without deleting its data.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 

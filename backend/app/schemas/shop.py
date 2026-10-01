@@ -75,6 +75,8 @@ class ShopUpdate(BaseModel):
     name: str | None = None
     category: str | None = None
     is_active: bool | None = None
+    # "Pick up from the shop" toggle — see Shop.pickup_enabled.
+    pickup_enabled: bool | None = None
     address_line1: str | None = None
     city: str | None = None
     latitude: float | None = None
@@ -130,6 +132,13 @@ class ShopOut(BaseModel):
     city: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # Public — a customer needs to know whether pickup is even offered
+    # before checkout shows them the option. See Shop.pickup_enabled;
+    # checkout additionally requires address_line1 to be set (nowhere to
+    # pick up from otherwise), so a customer-facing "can I pick up here"
+    # check should treat pickup_enabled AND address_line1 together, not
+    # this field alone.
+    pickup_enabled: bool = True
     # Only ever set by GET /shops when called with ?lat=&lng= (see
     # routers/shops.py) — a straight-line distance in km from the point
     # given, used to power "near me" search and sort. None on every other

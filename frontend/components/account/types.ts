@@ -3,11 +3,20 @@ export type AccountOrder = {
   shop_id: string;
   shop_name: string | null;
   status: string;
+  fulfillment_type: string;
   total_amount: string;
   item_count: number;
-  delivery_address: string;
+  delivery_address: string | null;
   created_at: string;
 };
+
+export function isPickupOrder(order: { fulfillment_type: string }): boolean {
+  return order.fulfillment_type === "pickup";
+}
+
+export function isFulfilled(status: string): boolean {
+  return status === "delivered" || status === "picked_up";
+}
 
 export type OrderDetailItem = {
   id: string;
@@ -23,7 +32,7 @@ export type OrderDetail = AccountOrder & {
   items: OrderDetailItem[];
   delivered_at: string | null;
   delivery_proof_photo_url?: string | null;
-  shop: { id: string; name: string } | null;
+  shop: { id: string; name: string; address_line1?: string | null; city?: string | null } | null;
 };
 
 export type ReturnRequestType = "return" | "exchange";
@@ -136,6 +145,8 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
   packing: { label: "Packing", className: "bg-indigo-50 text-indigo-600" },
   out_for_delivery: { label: "Out for Delivery", className: "bg-amber-50 text-amber-600" },
   delivered: { label: "Delivered", className: "bg-emerald-50 text-emerald-600" },
+  ready_for_pickup: { label: "Ready for Pickup", className: "bg-amber-50 text-amber-600" },
+  picked_up: { label: "Picked Up", className: "bg-emerald-50 text-emerald-600" },
   payment_failed: { label: "Payment Failed", className: "bg-red-50 text-red-600" },
 };
 

@@ -20,6 +20,8 @@ const STATUS_LABEL: Record<string, string> = {
   packing: "Packing your order",
   out_for_delivery: "Out for delivery",
   delivered: "Delivered",
+  ready_for_pickup: "Ready for pickup",
+  picked_up: "Picked up",
   payment_failed: "Payment failed",
 };
 
@@ -119,7 +121,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
   }
 
-  const eligibleForReturn = order.status === "delivered" && isWithinReturnWindow(order.delivered_at);
+  const isPickup = order.fulfillment_type === "pickup";
+  const eligibleForReturn =
+    (order.status === "delivered" || order.status === "picked_up") && isWithinReturnWindow(order.delivered_at);
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-10 space-y-6">
@@ -228,8 +232,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       </div>
 
       <div className="text-sm">
-        <p className="font-medium text-gray-700">Delivery address</p>
-        <p className="text-gray-500">{order.delivery_address}</p>
+        {isPickup ? (
+          <>
+            <p className="font-medium text-gray-700">Pickup from {order.shop?.name ?? "the shop"}</p>
+            <p className="text-gray-500">
+              {order.shop?.address_line1 ? `${order.shop.address_line1}, ${order.shop.city ?? ""}` : "Address on request from the shop."}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-medium text-gray-700">Delivery address</p>
+            <p className="text-gray-500">{order.delivery_address}</p>
+          </>
+        )}
       </div>
 
       {activeItem && order.shop && (

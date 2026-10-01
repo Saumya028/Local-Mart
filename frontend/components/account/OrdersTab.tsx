@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
-import { AccountOrder, OrderDetail, formatDate, orderStatusMeta } from "./types";
+import { AccountOrder, OrderDetail, formatDate, isFulfilled, orderStatusMeta } from "./types";
 
 export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: AccountOrder[]) => void }) {
   const [orders, setOrders] = useState<AccountOrder[]>([]);
@@ -96,10 +96,13 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
               </div>
             </div>
             <div className="flex flex-col items-end gap-1.5 shrink-0">
+              <span className="text-[11px] text-gray-400">
+                {order.fulfillment_type === "pickup" ? "Pickup" : "Delivery"}
+              </span>
               <span className={`text-xs font-medium rounded-full px-2.5 py-1 whitespace-nowrap ${status.className}`}>
                 {status.label}
               </span>
-              {order.status === "delivered" && (
+              {isFulfilled(order.status) && (
                 <button
                   onClick={() => reorder(order)}
                   disabled={reorderingId === order.id}
@@ -108,7 +111,7 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
                   {reorderingId === order.id ? "Adding…" : "Reorder"}
                 </button>
               )}
-              {order.status === "delivered" && (
+              {isFulfilled(order.status) && (
                 <Link href={`/orders/${order.id}`} className="text-xs text-gray-500 hover:underline">
                   Return / Exchange
                 </Link>

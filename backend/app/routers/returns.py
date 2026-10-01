@@ -60,14 +60,15 @@ async def create_return_request(
 ):
     """
     Opens a return or exchange request for one line item of a delivered
-    order — the customer-facing half of the flow; the shop owner's half
+    or picked-up order — the customer-facing half of the flow; the shop owner's half
     is PATCH /dashboard/returns/{id}/status in routers/shop_dashboard.py.
 
     Eligibility, checked in this order (each one is its own clear 400/404
     rather than one generic "not eligible" so the frontend can show the
     customer exactly why):
     1. The order exists and belongs to this user.
-    2. The order has actually been delivered (RETURN_ELIGIBLE_ORDER_STATUSES).
+    2. The order has actually reached the customer, however it was
+       fulfilled (RETURN_ELIGIBLE_ORDER_STATUSES).
     3. It's still within RETURN_WINDOW of the delivered_at timestamp.
     4. The order_item belongs to this order.
     5. The requested quantity doesn't exceed what's left un-claimed on
@@ -84,7 +85,7 @@ async def create_return_request(
 
     if order.status not in RETURN_ELIGIBLE_ORDER_STATUSES or order.delivered_at is None:
         raise HTTPException(
-            status_code=400, detail="Only delivered orders are eligible for return or exchange"
+            status_code=400, detail="Only delivered or picked-up orders are eligible for return or exchange"
         )
 
     deadline = order.delivered_at + RETURN_WINDOW

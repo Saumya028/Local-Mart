@@ -8,13 +8,20 @@ from app.schemas.shop import ShopOut
 
 
 class CheckoutRequest(BaseModel):
-    # Replaces the free-text delivery_address field from Phase 3 — the
-    # customer now selects a saved address instead of retyping one every
-    # checkout. The backend resolves this into a formatted text snapshot
-    # stored on the Order (see routers/orders.py), so the order still
-    # shows the correct address even if the address book entry is later
-    # edited or deleted.
-    address_id: uuid.UUID
+    # Optional now that pickup exists: only required if at least one shop
+    # in the cart is NOT in pickup_shop_ids below (see routers/orders.py's
+    # checkout, which raises its own clear 400 if it's missing but
+    # needed). Still resolved into a formatted text snapshot stored on
+    # each delivery Order, so the order still shows the correct address
+    # even if the address book entry is later edited or deleted.
+    address_id: uuid.UUID | None = None
+    # Cart items are already grouped by shop into separate Order rows
+    # (see the Order model's docstring) — this lets a customer pick up
+    # from SOME shops in their cart while having others delivered, in
+    # one checkout. Any shop_id here gets fulfillment_type="pickup"
+    # (rejected with a 400 if that shop doesn't offer pickup); every
+    # other shop in the cart gets "delivery" to address_id.
+    pickup_shop_ids: list[uuid.UUID] = []
 
 
 class OrderOut(BaseModel):
@@ -23,8 +30,12 @@ class OrderOut(BaseModel):
     id: uuid.UUID
     shop_id: uuid.UUID
     status: str
+    # "delivery" or "pickup" — see Order.fulfillment_type. Decides how
+    # the frontend labels status/timeline text and whether
+    # delivery_address or the shop's own address is what's shown.
+    fulfillment_type: str = "delivery"
     total_amount: Decimal
-    delivery_address: str
+    delivery_address: str | None = None
     created_at: datetime
     # Added for the My Account > My Orders list (a card per order needs
     # the shop's name and a rough item count without a second round trip
@@ -79,10 +90,12 @@ class OrderDetailOut(OrderOut):
 
 
 class OrderStatusUpdate(BaseModel):
-    # Constrained further in routers/shop_dashboard.py's ALLOWED_TRANSITIONS
-    # map — shop staff can only move an order forward through a defined
-    # sequence (confirmed -> preparing -> packing -> out_for_delivery ->
-    # delivered), never set it to an arbitrary status.
+    # Constrained further in routers/shop_dashboard.py's
+    # update_order_status, against whichever of
+    # app/core/order_status.py's two transition maps matches this
+    # order's OWN fulfillment_type — shop staff can only move an order
+    # forward through that one defined sequence, never set it to an
+    # arbitrary status or the other fulfillment type's steps.
     status: str
     # Required (validated server-side, not just here) when `status` is
     # "delivered" — see app/core/order_status.py's

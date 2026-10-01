@@ -75,12 +75,6 @@ async def checkout(
     """
 
     async def do_checkout() -> dict:
-        address_result = await db.execute(select(Address).where(Address.id == payload.address_id))
-        address = address_result.scalar_one_or_none()
-        if address is None or address.user_id != user.id:
-            raise HTTPException(status_code=404, detail="Address not found")
-        delivery_address_snapshot = f"{address.label}: {address.line1}, {address.city}"
-
         raw_items = await cart_store.get_cart_items(user.id)
         if not raw_items:
             raise HTTPException(status_code=400, detail="Cart is empty")
@@ -98,17 +92,52 @@ async def checkout(
                 )
             items_by_shop.setdefault(product.shop_id, []).append((product, qty))
 
+        # Cart items are already split by shop into separate Order rows
+        # (see the Order model's docstring), so pickup-vs-delivery is
+        # decided per shop here too: a customer can pick up from some
+        # shops in their cart while having the rest delivered, in one
+        # checkout. `pickup_shop_ids` on the request is exactly the set
+        # of shop_ids (from THIS cart) the customer chose "Pick up" for —
+        # every other shop in items_by_shop gets "delivery".
+        pickup_shop_ids = set(payload.pickup_shop_ids)
+        shops_result = await db.execute(select(Shop).where(Shop.id.in_(items_by_shop.keys())))
+        shops_by_id = {s.id: s for s in shops_result.scalars().all()}
+        for shop_id in pickup_shop_ids & items_by_shop.keys():
+            shop = shops_by_id[shop_id]
+            if not shop.pickup_enabled or not shop.address_line1:
+                raise HTTPException(
+                    status_code=400, detail=f'"{shop.name}" doesn\'t currently offer pickup'
+                )
+
+        # An address is only needed at all if at least one shop in THIS
+        # cart is being delivered — a cart that's 100% pickup never
+        # touches the address book.
+        needs_delivery_address = bool(items_by_shop.keys() - pickup_shop_ids)
+        delivery_address_snapshot: str | None = None
+        if needs_delivery_address:
+            if payload.address_id is None:
+                raise HTTPException(
+                    status_code=400, detail="Please add or select a delivery address"
+                )
+            address_result = await db.execute(select(Address).where(Address.id == payload.address_id))
+            address = address_result.scalar_one_or_none()
+            if address is None or address.user_id != user.id:
+                raise HTTPException(status_code=404, detail="Address not found")
+            delivery_address_snapshot = f"{address.label}: {address.line1}, {address.city}"
+
         created_orders: list[Order] = []
         grand_total = Decimal("0")
 
         for shop_id, items in items_by_shop.items():
+            is_pickup = shop_id in pickup_shop_ids
             order = Order(
                 id=uuid.uuid4(),
                 user_id=user.id,
                 shop_id=shop_id,
                 status="pending",
                 total_amount=Decimal("0"),  # filled in below once we know the line totals
-                delivery_address=delivery_address_snapshot,
+                fulfillment_type="pickup" if is_pickup else "delivery",
+                delivery_address=None if is_pickup else delivery_address_snapshot,
             )
             db.add(order)
             await db.flush()  # so order.id is usable as a foreign key on the OrderItems below
@@ -270,12 +299,14 @@ async def list_orders(
             "id": order.id,
             "shop_id": order.shop_id,
             "status": order.status,
+            "fulfillment_type": order.fulfillment_type,
             "total_amount": order.total_amount,
             "delivery_address": order.delivery_address,
             "created_at": order.created_at,
             "shop_name": shop_name,
             "item_count": item_count,
             "delivered_at": order.delivered_at,
+            "delivery_proof_photo_url": order.delivery_proof_photo_url,
         }
         for order, shop_name, item_count in result.all()
     ]

@@ -18,7 +18,9 @@ class Order(Base):
 
     status flow: pending -> confirmed (payment succeeded)
                           -> payment_failed (payment failed, stock released)
-    More statuses (shipped, delivered, cancelled) get added in later phases.
+    From "confirmed" the pipeline forks on `fulfillment_type` — see
+    app/core/order_status.py for the full delivery vs. pickup transition
+    maps.
     """
 
     __tablename__ = "orders"
@@ -44,15 +46,29 @@ class Order(Base):
         String, default="pending", server_default="pending", index=True
     )
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2))
-    delivery_address: Mapped[str] = mapped_column(String)
+    # "delivery" (default — matches every order created before this
+    # feature) or "pickup", set once at checkout (see routers/orders.py's
+    # checkout) and never changed after. Decides which of
+    # app/core/order_status.py's two transition maps this order follows.
+    fulfillment_type: Mapped[str] = mapped_column(
+        String, default="delivery", server_default="delivery"
+    )
+    # Only set for fulfillment_type="delivery" — a pickup order has
+    # nowhere to deliver TO, so this stays null for one (see checkout's
+    # do_checkout). Nullable rather than an empty string so "no delivery
+    # address on this order" and "address snapshot was somehow blank"
+    # can never be confused.
+    delivery_address: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # Set once, the moment a shop owner moves this order to "delivered"
-    # (see routers/shop_dashboard.py's update_order_status) — never
-    # touched again after that. This is what the return/exchange window
-    # (app/core/return_status.py's RETURN_WINDOW) counts from; using
+    # Set once, the moment a shop owner (or staff) moves this order into
+    # EITHER terminal status — "delivered" for a delivery order or
+    # "picked_up" for a pickup one (see app/core/order_status.py's
+    # TERMINAL_STATUSES) — never touched again after that. This is what
+    # the return/exchange window (app/core/return_status.py's
+    # RETURN_WINDOW) counts from for both fulfillment types; using
     # created_at instead would unfairly shrink the window by however long
-    # the order took to actually arrive.
+    # the order took to actually reach the customer.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Set the moment a delivery person (or manager/owner) marks this

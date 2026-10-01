@@ -41,6 +41,7 @@ export default function ShopDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
+  const [togglingPickup, setTogglingPickup] = useState(false);
 
   // A manager/delivery account is staff — created BY a shop owner (see
   // the new Staff tab), never self-service, and scoped to exactly one
@@ -110,6 +111,27 @@ export default function ShopDashboardPage() {
     await refresh();
     setLoadingShops(true);
     await loadShops();
+  }
+
+  // Owner/admin-only "Pick up from the shop" switch (see Sidebar's shop
+  // card) — PUT /dashboard/shops/{id} already accepts pickup_enabled via
+  // ShopUpdate's generic setattr loop, so no new endpoint was needed.
+  // Updates local state from the response rather than re-fetching every
+  // shop, so the rest of the sidebar (nav counts, other shops in a
+  // multi-shop dropdown) doesn't flicker.
+  async function togglePickup(shopId: string, next: boolean) {
+    setTogglingPickup(true);
+    try {
+      const updated: Shop = await apiFetch(`/dashboard/shops/${shopId}`, {
+        method: "PUT",
+        body: JSON.stringify({ pickup_enabled: next }),
+      });
+      setShops((prev) => prev.map((s) => (s.id === shopId ? updated : s)));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTogglingPickup(false);
+    }
   }
 
   // Keep the "pending orders" badge in the sidebar fresh across tab
@@ -220,6 +242,12 @@ export default function ShopDashboardPage() {
         pendingCount={pendingCount}
         pendingReturnsCount={pendingReturnsCount}
         role={profile?.role}
+        onTogglePickup={
+          (profile?.role === "shop_owner" || profile?.role === "admin") && selectedShopId
+            ? (next) => togglePickup(selectedShopId, next)
+            : undefined
+        }
+        togglingPickup={togglingPickup}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar title={TAB_TITLES[tab]} name={profile?.full_name ?? profile?.email ?? null} />

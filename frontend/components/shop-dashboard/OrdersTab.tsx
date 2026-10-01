@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { uploadDeliveryProof } from "@/lib/deliveryProofUpload";
-import { DashboardOrder, PROOF_REQUIRED_STATUSES, STATUS_TRANSITIONS, formatINR, statusMeta, timeAgo } from "./types";
+import {
+  DashboardOrder,
+  PROOF_REQUIRED_STATUSES,
+  formatINR,
+  statusMeta,
+  timeAgo,
+  transitionsForFulfillment,
+} from "./types";
 
 const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
   { key: "all", label: "All" },
@@ -12,7 +19,9 @@ const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
   { key: "preparing", label: "Preparing", statuses: ["preparing"] },
   { key: "packing", label: "Packing", statuses: ["packing"] },
   { key: "out_for_delivery", label: "Out for Delivery", statuses: ["out_for_delivery"] },
+  { key: "ready_for_pickup", label: "Ready for Pickup", statuses: ["ready_for_pickup"] },
   { key: "delivered", label: "Delivered", statuses: ["delivered"] },
+  { key: "picked_up", label: "Picked Up", statuses: ["picked_up"] },
 ];
 
 export function OrdersTab({ shopId }: { shopId: string }) {
@@ -51,7 +60,7 @@ export function OrdersTab({ shopId }: { shopId: string }) {
   }, [shopId]);
 
   async function advance(order: DashboardOrder, proofPhotoUrl?: string) {
-    const next = STATUS_TRANSITIONS[order.status]?.next;
+    const next = transitionsForFulfillment(order.fulfillment_type)[order.status]?.next;
     if (!next) return;
     setUpdatingId(order.id);
     try {
@@ -68,13 +77,18 @@ export function OrdersTab({ shopId }: { shopId: string }) {
   }
 
   function accept(order: DashboardOrder) {
-    // Every actionable order only ever has ONE possible next step — see
-    // STATUS_TRANSITIONS. There is no reject/cancel action offered here
-    // by design: once an order is paid and in the queue, the shop
-    // accepts it and moves it forward. The one exception is the final
-    // "delivered" step, which needs a proof photo first — that opens a
-    // modal instead of calling the API straight away.
-    const next = STATUS_TRANSITIONS[order.status]?.next;
+    // Every actionable order only ever has ONE possible next step,
+    // picked from whichever of DELIVERY_STATUS_TRANSITIONS /
+    // PICKUP_STATUS_TRANSITIONS matches this order's OWN
+    // fulfillment_type. There is no reject/cancel action offered here by
+    // design: once an order is paid and in the queue, the shop accepts
+    // it and moves it forward. The one exception is the final
+    // "delivered" step (delivery orders only), which needs a proof
+    // photo first — that opens a modal instead of calling the API
+    // straight away. A pickup order's final step ("Mark Picked Up")
+    // needs no photo — the shop's own staff hands it over in person and
+    // IS the witness — so it goes straight through advance() below.
+    const next = transitionsForFulfillment(order.fulfillment_type)[order.status]?.next;
     if (next && PROOF_REQUIRED_STATUSES.has(next)) {
       setProofOrder(order);
       setProofFile(null);
@@ -174,6 +188,7 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                 <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50/50">
                   <th className="px-5 py-3 font-medium">Order ID</th>
                   <th className="px-5 py-3 font-medium">Customer</th>
+                  <th className="px-5 py-3 font-medium">Type</th>
                   <th className="px-5 py-3 font-medium">Items</th>
                   <th className="px-5 py-3 font-medium">Total</th>
                   <th className="px-5 py-3 font-medium">Status</th>
@@ -184,13 +199,24 @@ export function OrdersTab({ shopId }: { shopId: string }) {
               <tbody>
                 {filtered.map((o) => {
                   const meta = statusMeta(o.status);
-                  const action = STATUS_TRANSITIONS[o.status];
+                  const action = transitionsForFulfillment(o.fulfillment_type)[o.status];
                   return (
                     <tr key={o.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40">
                       <td className="px-5 py-3 text-blue-600 font-medium">#{o.id.slice(0, 8)}</td>
                       <td className="px-5 py-3">
                         <p className="text-gray-800">{o.buyer_name || "—"}</p>
                         <p className="text-xs text-gray-400">{o.buyer_email}</p>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            o.fulfillment_type === "pickup"
+                              ? "bg-teal-50 text-teal-700"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {o.fulfillment_type === "pickup" ? "Pickup" : "Delivery"}
+                        </span>
                       </td>
                       <td className="px-5 py-3 text-gray-500">{o.item_count} items</td>
                       <td className="px-5 py-3 font-medium text-gray-800">{formatINR(o.total_amount)}</td>
