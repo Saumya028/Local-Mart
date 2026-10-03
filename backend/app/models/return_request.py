@@ -94,18 +94,14 @@ class ReturnRequest(Base):
     price_difference: Mapped[float] = mapped_column(
         Numeric(10, 2), default=0, server_default="0"
     )
-    # Only set when price_difference > 0 — the Razorpay Order created to
-    # collect that top-up, mirroring how Payment.provider_ref stores the
-    # Razorpay order id for a normal checkout (see routers/orders.py's
-    # `checkout`). Kept on this row rather than reusing the Payment table,
-    # since Payment.order_id is NOT NULL and no Order exists yet for the
-    # replacement item at request time — see new_order_id below for when
-    # one finally does.
-    difference_razorpay_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Flips true once routers/returns.py's verify_difference_payment has
-    # checked Razorpay's signature on that top-up payment — the same
-    # signature-verification pattern as routers/orders.py's
-    # verify_payment, just scoped to this smaller amount.
+    # How the customer settles a positive price_difference — directly
+    # with the shop: "upi" or "cash". Null until they choose.
+    difference_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    # UTR the customer typed in if they paid the difference by UPI.
+    difference_payer_reference: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Flips true once the SHOP confirms it received the top-up (UPI or
+    # cash). Gates the shop completing the exchange (see
+    # routers/shop_dashboard.py's update_return_status).
     difference_paid: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     # Set once, when a shop owner marks this "completed" — the new Order

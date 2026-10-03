@@ -123,7 +123,7 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">{shop.name}</p>
                     <p className="text-xs text-gray-400 truncate">
-                      {shop.owner_name ?? shop.owner_email} · {shop.category}
+                      {shop.owner_name ?? shop.owner_email ?? "Shop owner"} · {shop.category}
                       {shop.location ? ` · ${shop.location}` : ""}
                     </p>
                     <p className="text-xs text-gray-300 mt-0.5">Applied {timeAgo(shop.created_at)}</p>
@@ -201,7 +201,7 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
                 <tr key={shop.id} className="border-b border-gray-50 last:border-0">
                   <td className="px-5 py-3 font-medium text-gray-900">{shop.name}</td>
                   <td className="px-5 py-3 text-gray-500">{shop.category}</td>
-                  <td className="px-5 py-3 text-gray-500">{shop.owner_name ?? shop.owner_email}</td>
+                  <td className="px-5 py-3 text-gray-500">{shop.owner_name ?? shop.owner_email ?? "Shop owner"}</td>
                   <td className="px-5 py-3 text-gray-500">{shop.rating.toFixed(1)}</td>
                   <td className="px-5 py-3">
                     <span

@@ -22,10 +22,19 @@ const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
   { key: "ready_for_pickup", label: "Ready for Pickup", statuses: ["ready_for_pickup"] },
   { key: "delivered", label: "Delivered", statuses: ["delivered"] },
   { key: "picked_up", label: "Picked Up", statuses: ["picked_up"] },
+  { key: "cancelled", label: "Cancelled", statuses: ["cancelled"] },
 ];
+
+// Mirrors backend SHOP_CANCELABLE_FROM — a shop can cancel any time
+// before the order leaves for delivery / is ready for pickup.
+const SHOP_CANCELABLE = new Set(["confirmed", "preparing", "packing"]);
 
 export function OrdersTab({ shopId }: { shopId: string }) {
   const { profile } = useAuth();
+  // Confirming/rejecting payments and cancelling orders is for the shop
+  // owner and managers — a delivery hire only moves orders along (the
+  // backend enforces this too).
+  const canManagePayments = profile?.role !== "delivery_partner";
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +77,21 @@ export function OrdersTab({ shopId }: { shopId: string }) {
         method: "PATCH",
         body: JSON.stringify({ status: next, delivery_proof_photo_url: proofPhotoUrl ?? null }),
       });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  // Payment goes straight from the customer to this shop, so the shop is
+  // the one who confirms (or disputes) that the money arrived.
+  async function orderAction(order: DashboardOrder, path: string, confirmMsg?: string) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setUpdatingId(order.id);
+    try {
+      await apiFetch(`/dashboard/orders/${order.id}${path}`, { method: "POST" });
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -224,6 +248,25 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${meta.className}`}>
                           {meta.label}
                         </span>
+                        {o.payment_status && o.status !== "cancelled" && (
+                          <p
+                            className={`text-[11px] mt-1 ${
+                              o.payment_status === "paid"
+                                ? "text-emerald-600"
+                                : o.payment_status === "submitted"
+                                  ? "text-amber-600"
+                                  : "text-gray-500"
+                            }`}
+                          >
+                            {o.payment_status === "paid"
+                              ? `Paid (${o.payment_method === "cash" ? "cash" : "UPI"})`
+                              : o.payment_status === "submitted"
+                                ? `UPI paid? ref ${o.payer_reference || "—"}`
+                                : o.payment_method === "cash"
+                                  ? `Collect ${formatINR(o.total_amount)} cash`
+                                  : "Awaiting UPI payment"}
+                          </p>
+                        )}
                         {o.delivery_proof_photo_url && (
                           <a
                             href={o.delivery_proof_photo_url}
@@ -237,17 +280,60 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                       </td>
                       <td className="px-5 py-3 text-gray-400">{timeAgo(o.created_at)}</td>
                       <td className="px-5 py-3">
-                        {action ? (
-                          <button
-                            onClick={() => accept(o)}
-                            disabled={updatingId === o.id}
-                            className="bg-blue-600 text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-                          >
-                            {updatingId === o.id ? "…" : action.label}
-                          </button>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
+                        <div className="flex flex-col items-start gap-1.5">
+                          {canManagePayments && o.payment_status === "submitted" && (
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => orderAction(o, "/payment/confirm")}
+                                disabled={updatingId === o.id}
+                                className="bg-emerald-600 text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+                              >
+                                Payment received
+                              </button>
+                              <button
+                                onClick={() =>
+                                  orderAction(o, "/payment/reject", "Mark this payment as NOT received?")
+                                }
+                                disabled={updatingId === o.id}
+                                className="text-xs text-red-500 px-2 disabled:opacity-50"
+                              >
+                                Not received
+                              </button>
+                            </div>
+                          )}
+                          {canManagePayments && o.payment_status === "unpaid" && o.payment_method === "upi" && o.status !== "cancelled" && (
+                            <button
+                              onClick={() => orderAction(o, "/payment/confirm", "Mark this order as paid?")}
+                              disabled={updatingId === o.id}
+                              className="text-xs text-emerald-700 hover:underline disabled:opacity-50"
+                            >
+                              Mark as paid
+                            </button>
+                          )}
+                          {action && (
+                            <button
+                              onClick={() => accept(o)}
+                              disabled={updatingId === o.id}
+                              className="bg-blue-600 text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+                            >
+                              {updatingId === o.id ? "…" : action.label}
+                            </button>
+                          )}
+                          {canManagePayments && SHOP_CANCELABLE.has(o.status) && (
+                            <button
+                              onClick={() =>
+                                orderAction(o, "/cancel", "Cancel this order? Stock will be released. If the customer already paid, you'll need to refund them yourself.")
+                              }
+                              disabled={updatingId === o.id}
+                              className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                            >
+                              Cancel order
+                            </button>
+                          )}
+                          {!action && !SHOP_CANCELABLE.has(o.status) && o.payment_status !== "submitted" && (
+                            <span className="text-xs text-gray-300">—</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

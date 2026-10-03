@@ -17,7 +17,7 @@ from that validation, both real and both fixed:
   deliberately narrow) test suite, lint on both apps, and a GitHub
   Actions workflow that runs all of it on every push. See each folder's
   README for exactly what's covered and what honestly still isn't.
-- **A 0dependency vulnerability scan found real CVEs, not hypothetical
+- **A dependency vulnerability scan found real CVEs, not hypothetical
   ones** — including a critical-severity one in the version of Next.js
   this project was built on. Both apps' dependencies were audited,
   patched where a safe patch existed, and the one exception (a
@@ -69,8 +69,29 @@ from that validation, both real and both fixed:
 - Privacy Policy and Terms of Service pages — explicitly labeled as
   working templates that need real legal review, not a launch-ready
   substitute for one.
-- Confirmed (unchanged from Phase 3): card details are entered directly
-  into Razorpay's own hosted widget and never touch this app's servers.
+- Payments are direct, customer -> shop (UPI or cash). LocalMart never
+  holds or processes money, so there is no payment gateway, no webhook and
+  no payment API keys. See "Direct payments" below.
+
+## Direct payments (UPI / cash)
+- Each shop sets a UPI ID and/or uploads its UPI QR, and turns "accept
+  cash" on/off, under **Shop Dashboard -> Payments**.
+- At checkout the customer picks UPI or cash **per shop**. For UPI the
+  order page shows a "Pay with UPI app" button (opens GPay/PhonePe/Paytm
+  with the amount filled in), a QR code, and an "I've paid" button with an
+  optional UTR field.
+- The platform can't see the transfer, so the **shop confirms** it
+  ("Payment received" in Orders). Cash is marked paid automatically when
+  the order is marked delivered / picked up.
+- Orders start as `confirmed`; payment state is separate
+  (`unpaid -> submitted -> paid`). Customers can cancel an unpaid order
+  before the shop starts on it; shops can cancel before dispatch (stock is
+  released).
+- Exchange price differences are paid the same way and confirmed by the shop.
+- Admin -> Settings -> Payment Gateway switches UPI / cash on or off for the
+  whole platform.
+- Run `alembic upgrade head` (migration `0016`) and `npm install` (adds
+  `qrcode.react`).
 
 ## What you need before running this
 

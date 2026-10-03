@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
-import { AccountOrder, OrderDetail, formatDate, isFulfilled, orderStatusMeta } from "./types";
+import { AccountOrder, OrderDetail, formatDate, isFulfilled, orderStatusMeta, paymentBadge } from "./types";
 
 export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: AccountOrder[]) => void }) {
   const [orders, setOrders] = useState<AccountOrder[]>([]);
@@ -72,6 +72,7 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
     <div className="space-y-3">
       {orders.map((order) => {
         const status = orderStatusMeta(order.status);
+        const pay = paymentBadge(order);
         return (
           <div
             key={order.id}
@@ -102,6 +103,11 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
               <span className={`text-xs font-medium rounded-full px-2.5 py-1 whitespace-nowrap ${status.className}`}>
                 {status.label}
               </span>
+              {pay && (
+                <span className={`text-[11px] font-medium rounded-full px-2 py-0.5 whitespace-nowrap ${pay.className}`}>
+                  {pay.label}
+                </span>
+              )}
               {isFulfilled(order.status) && (
                 <button
                   onClick={() => reorder(order)}

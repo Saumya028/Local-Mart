@@ -2,12 +2,10 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import razorpay
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.db import get_db
 from app.core.return_status import (
     CUSTOMER_CANCELABLE_FROM,
@@ -17,16 +15,15 @@ from app.core.return_status import (
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
 from app.models import Order, OrderItem, Product, Profile, ReturnRequest, Shop
+from app.core.upi import PAYMENT_METHODS, build_upi_link, is_valid_payer_reference
 from app.schemas.return_request import (
-    DifferencePaymentResponse,
+    DifferencePaymentInfo,
+    DifferencePaymentRequest,
     ReturnRequestCreate,
     ReturnRequestOut,
-    VerifyDifferencePaymentRequest,
 )
 
 router = APIRouter(tags=["returns"])
-
-razorpay_client = razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
 
 
 async def _returned_qty_for_item(db: AsyncSession, order_item_id: uuid.UUID) -> int:
@@ -221,24 +218,55 @@ async def list_my_returns(
     return [_serialize(rr, product_name=pname, shop_name=sname) for rr, pname, sname in result.all()]
 
 
-@router.post("/returns/{return_id}/difference-payment", response_model=DifferencePaymentResponse)
-async def create_difference_payment(
+def _difference_info(rr: ReturnRequest, shop: Shop) -> DifferencePaymentInfo:
+    takes_upi = bool(shop.accepts_upi and (shop.upi_id or shop.upi_qr_url))
+    info = DifferencePaymentInfo(
+        amount=rr.price_difference,
+        method=rr.difference_method,
+        payee_name=shop.name,
+        shop_accepts_upi=takes_upi,
+        shop_accepts_cash=bool(shop.accepts_cash),
+    )
+    if rr.difference_method == "upi":
+        info.upi_id = shop.upi_id
+        info.upi_qr_url = shop.upi_qr_url
+        if shop.upi_id:
+            info.upi_link = build_upi_link(
+                shop.upi_id, shop.name, Decimal(str(rr.price_difference)), f"Exchange {str(rr.id)[:8]}"
+            )
+    return info
+
+
+@router.get("/returns/{return_id}/difference-payment", response_model=DifferencePaymentInfo)
+async def get_difference_payment(
     return_id: str,
     user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Opens the top-up payment for an exchange where the replacement item
-    costs more than the original — mirrors routers/orders.py's `checkout`
-    for a normal cart, just scoped to one small amount instead of a whole
-    order. The frontend opens Razorpay's popup against whatever this
-    returns, the same widget used at checkout.
+    """How (and to whom) to pay an exchange's price difference — straight
+    to the shop. The shop's UPI id / QR are only revealed here, to the
+    customer who owns the request."""
+    rr = await _load_owned_return(db, return_id, user)
+    shop = (await db.execute(select(Shop).where(Shop.id == rr.shop_id))).scalar_one()
+    return _difference_info(rr, shop)
 
-    Only reachable once the shop has approved the exchange (paying before
-    the shop has even agreed to it would let a customer fund an exchange
-    the shop might reject) and only while unpaid. Calling this again
-    before paying reuses the same Razorpay Order rather than creating a
-    new one each time the customer reopens the payment sheet.
+
+@router.post("/returns/{return_id}/difference-payment", response_model=DifferencePaymentInfo)
+async def choose_difference_payment(
+    return_id: str,
+    payload: DifferencePaymentRequest,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    The customer picks UPI or cash for an exchange where the replacement
+    costs more, and (for UPI, after sending the money) optionally enters
+    the UTR. Nothing is "paid" yet — the SHOP confirms receipt (see
+    routers/shop_dashboard.py's confirm_difference_paid), which is what
+    unblocks completing the exchange.
+
+    Only reachable once the shop has approved the exchange and only while
+    unconfirmed.
     """
     rr = await _load_owned_return(db, return_id, user)
     if rr.request_type != "exchange" or rr.price_difference <= 0:
@@ -249,62 +277,25 @@ async def create_difference_payment(
         )
     if rr.difference_paid:
         raise HTTPException(status_code=400, detail="The price difference has already been paid")
+    if payload.method not in PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="Choose UPI or cash")
 
-    if rr.difference_razorpay_order_id is None:
-        try:
-            razorpay_order = razorpay_client.order.create(
-                {
-                    "amount": int(rr.price_difference * 100),
-                    "currency": "INR",
-                    "notes": {"return_request_id": str(rr.id), "user_id": str(user.id)},
-                }
-            )
-        except razorpay.errors.BadRequestError as e:
-            raise HTTPException(status_code=502, detail=f"Payment provider error: {e}")
-        rr.difference_razorpay_order_id = razorpay_order["id"]
-        await db.commit()
+    shop = (await db.execute(select(Shop).where(Shop.id == rr.shop_id))).scalar_one()
+    if payload.method == "upi" and not (shop.accepts_upi and (shop.upi_id or shop.upi_qr_url)):
+        raise HTTPException(status_code=400, detail="This shop doesn't currently accept UPI")
+    if payload.method == "cash" and not shop.accepts_cash:
+        raise HTTPException(status_code=400, detail="This shop doesn't currently accept cash")
 
-    return DifferencePaymentResponse(
-        razorpay_order_id=rr.difference_razorpay_order_id,
-        razorpay_key_id=settings.razorpay_key_id,
-        amount=rr.price_difference,
-    )
-
-
-@router.post("/returns/{return_id}/verify-difference-payment", response_model=ReturnRequestOut)
-async def verify_difference_payment(
-    return_id: str,
-    payload: VerifyDifferencePaymentRequest,
-    user: Profile = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Called right after Razorpay's popup reports success for the top-up
-    payment — same signature-verification approach as routers/orders.py's
-    verify_payment, just flipping `difference_paid` on this one
-    ReturnRequest instead of an Order/Payment pair. Once this is true, the
-    shop is unblocked from marking the exchange "completed" (see
-    routers/shop_dashboard.py's update_return_status).
-    """
-    rr = await _load_owned_return(db, return_id, user)
-    if rr.difference_razorpay_order_id != payload.razorpay_order_id:
-        raise HTTPException(status_code=400, detail="This payment doesn't match this return request")
-
-    try:
-        razorpay_client.utility.verify_payment_signature(
-            {
-                "razorpay_order_id": payload.razorpay_order_id,
-                "razorpay_payment_id": payload.razorpay_payment_id,
-                "razorpay_signature": payload.razorpay_signature,
-            }
+    ref = (payload.payer_reference or "").strip()
+    if ref and not is_valid_payer_reference(ref):
+        raise HTTPException(
+            status_code=400, detail="The transaction/UTR number should be 8-30 letters or digits"
         )
-    except razorpay.errors.SignatureVerificationError:
-        raise HTTPException(status_code=400, detail="Payment signature could not be verified")
 
-    rr.difference_paid = True
+    rr.difference_method = payload.method
+    rr.difference_payer_reference = ref or None if payload.method == "upi" else None
     await db.commit()
-    await db.refresh(rr)
-    return _serialize(rr)
+    return _difference_info(rr, shop)
 
 
 @router.post("/returns/{return_id}/cancel", response_model=ReturnRequestOut)

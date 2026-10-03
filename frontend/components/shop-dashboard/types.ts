@@ -21,6 +21,11 @@ export type Shop = {
   // address_line1 to be set before actually offering pickup to a
   // customer.
   pickup_enabled: boolean;
+  // Direct payments — customers pay the shop itself, never the platform.
+  upi_id: string | null;
+  upi_qr_url: string | null;
+  accepts_upi: boolean;
+  accepts_cash: boolean;
 };
 
 export type Product = {
@@ -54,6 +59,11 @@ export type DashboardOrder = {
   created_at: string;
   delivered_at: string | null;
   delivery_proof_photo_url: string | null;
+  // Direct-payment state — see backend app/models/payment.py.
+  payment_method: string | null;
+  payment_status: string | null; // unpaid | submitted | paid
+  payer_reference: string | null;
+  payment_marked_at: string | null;
 };
 
 export type ReturnRequestType = "return" | "exchange";
@@ -86,6 +96,8 @@ export type DashboardReturn = {
   // failed request).
   price_difference: string;
   difference_paid: boolean;
+  difference_method: string | null;
+  difference_payer_reference: string | null;
   new_order_id: string | null;
 };
 

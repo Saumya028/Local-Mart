@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
 from app.core.db import get_db
+from app.core.payment_confirmation import platform_enabled_methods
 from app.core.security import get_current_user
 from app.models import Product, Profile, Shop
 from app.schemas.product import ProductOut
@@ -52,6 +53,7 @@ async def get_cart(
     shops_result = await db.execute(select(Shop).where(Shop.id.in_(shop_ids)))
     shops_by_id = {s.id: s for s in shops_result.scalars().all()}
 
+    platform_methods = await platform_enabled_methods(db)
     items = []
     total = 0
     for product_id, qty in raw_items.items():
@@ -79,6 +81,11 @@ async def get_cart(
                     "pickup_enabled": shop.pickup_enabled,
                     "address_line1": shop.address_line1,
                     "city": shop.city,
+                    # Direct payment: UPI counts only if the owner has
+                    # it on AND gave a UPI id or QR to pay to.
+                    "accepts_upi": "upi" in platform_methods
+                    and bool(shop.accepts_upi and (shop.upi_id or shop.upi_qr_url)),
+                    "accepts_cash": "cash" in platform_methods and shop.accepts_cash,
                 }
                 if shop is not None
                 else None,

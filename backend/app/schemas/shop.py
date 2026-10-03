@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from app.core.upi import is_valid_upi_id, normalize_upi_id
+
 # Kept in sync by hand with admin.py's VALID_DOCS_STATUSES:
 # "pending"   — no documents on file yet, or an admin has explicitly
 #                requested new/additional ones (see routers/admin.py's
@@ -84,6 +86,12 @@ class ShopUpdate(BaseModel):
     # Category-specific fields (e.g. a pharmacy's drug license number) —
     # see Shop.attributes and core/attribute_validation.py.
     attributes: dict | None = None
+    # Direct payments — see Shop.upi_id etc. An empty string clears the
+    # UPI id / QR.
+    upi_id: str | None = None
+    upi_qr_url: str | None = None
+    accepts_upi: bool | None = None
+    accepts_cash: bool | None = None
     # Lets an owner resubmit documents after a rejection or a
     # "Request Docs" admin action, via the SAME endpoint
     # (PUT /dashboard/shops/{id}) rather than a separate one — see that
@@ -104,6 +112,24 @@ class ShopUpdate(BaseModel):
         if v is not None and not -180 <= v <= 180:
             raise ValueError("longitude must be between -180 and 180")
         return v
+
+
+    @field_validator("upi_id")
+    @classmethod
+    def valid_upi_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return None
+        if not is_valid_upi_id(v):
+            raise ValueError("Enter a valid UPI ID, like shopname@okaxis")
+        return normalize_upi_id(v)
+
+    @field_validator("upi_qr_url")
+    @classmethod
+    def blank_qr_to_none(cls, v: str | None) -> str | None:
+        return (v.strip() or None) if v is not None else None
 
 
 class ShopOut(BaseModel):
@@ -139,6 +165,12 @@ class ShopOut(BaseModel):
     # check should treat pickup_enabled AND address_line1 together, not
     # this field alone.
     pickup_enabled: bool = True
+    # Public flags only (never the UPI id / QR themselves — those are
+    # revealed per-order, see schemas/order.py's PaymentInfo). A shop
+    # only really accepts UPI if accepts_upi is on AND it has a UPI id or
+    # QR on file; the cart endpoint folds that into these two flags.
+    accepts_upi: bool = True
+    accepts_cash: bool = True
     # Only ever set by GET /shops when called with ?lat=&lng= (see
     # routers/shops.py) — a straight-line distance in km from the point
     # given, used to power "near me" search and sort. None on every other
@@ -160,3 +192,6 @@ class DashboardShopOut(ShopOut):
     documents: list[ShopDocument]
     rejection_reason: str | None
     attributes: dict
+    # The owner's own payment details — see Shop.upi_id.
+    upi_id: str | None = None
+    upi_qr_url: str | None = None

@@ -70,6 +70,8 @@ class ReturnRequestOut(BaseModel):
     # "return", since there's no replacement item to compare against.
     price_difference: Decimal = Decimal("0")
     difference_paid: bool = False
+    difference_method: str | None = None
+    difference_payer_reference: str | None = None
     new_order_id: uuid.UUID | None = None
 
     # Filled in by each router's join, not stored on the row itself — same
@@ -83,26 +85,26 @@ class ReturnRequestOut(BaseModel):
     buyer_email: str | None = None
 
 
-class DifferencePaymentResponse(BaseModel):
-    """POST /returns/{id}/difference-payment — everything the frontend's
-    Razorpay Checkout widget needs to open its popup for the top-up
-    amount, the same shape CheckoutResponse gives the main checkout flow
-    (see schemas/order.py)."""
+class DifferencePaymentRequest(BaseModel):
+    """POST /returns/{id}/difference-payment — the customer picks how
+    they'll pay the top-up directly to the shop, and (for UPI, once they
+    have paid) the UTR."""
 
-    razorpay_order_id: str
-    razorpay_key_id: str
+    method: str  # "upi" | "cash"
+    payer_reference: str | None = None
+
+
+class DifferencePaymentInfo(BaseModel):
+    """Payee details for the top-up, shown to the customer only."""
+
     amount: Decimal
-
-
-class VerifyDifferencePaymentRequest(BaseModel):
-    """POST /returns/{id}/verify-difference-payment — the signed proof
-    Razorpay's Checkout popup hands back, re-verified server-side exactly
-    like schemas/order.py's VerifyPaymentRequest does for a normal
-    checkout payment."""
-
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
+    method: str | None = None
+    payee_name: str | None = None
+    upi_id: str | None = None
+    upi_qr_url: str | None = None
+    upi_link: str | None = None
+    shop_accepts_upi: bool = False
+    shop_accepts_cash: bool = False
 
 
 class ReturnStatusUpdate(BaseModel):

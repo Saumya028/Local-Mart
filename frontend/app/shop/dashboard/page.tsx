@@ -14,6 +14,7 @@ import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
 import { StaffTab } from "@/components/shop-dashboard/StaffTab";
+import { PaymentSettingsTab } from "@/components/shop-dashboard/PaymentSettingsTab";
 import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
 import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
@@ -28,6 +29,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   products: "Products",
   inventory: "Inventory",
   analytics: "Analytics",
+  payments: "Payments",
   staff: "Staff",
 };
 
@@ -260,6 +262,14 @@ export default function ShopDashboardPage() {
           {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
           {selectedShopId && tab === "analytics" && <AnalyticsTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "payments" && selectedShop && (
+            <PaymentSettingsTab
+              key={selectedShop.id}
+              shop={selectedShop}
+              userId={profile!.id}
+              onSaved={(updated) => setShops((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
+            />
+          )}
           {selectedShopId && tab === "staff" && <StaffTab shopId={selectedShopId} />}
         </div>
       </div>

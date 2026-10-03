@@ -45,6 +45,20 @@ export function ReturnsTab({ shopId }: { shopId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);
 
+  // The customer pays the top-up directly to the shop (UPI or cash) —
+  // the shop confirming receipt here is what unblocks "Complete".
+  async function confirmDifference(id: string) {
+    setUpdatingId(id);
+    try {
+      await apiFetch(`/dashboard/returns/${id}/difference/confirm`, { method: "POST" });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   async function setStatus(id: string, status: string, shopNote?: string) {
     setUpdatingId(id);
     try {
@@ -146,9 +160,22 @@ export function ReturnsTab({ shopId }: { shopId: string }) {
                   >
                     Replacement costs {formatINR(r.price_difference)} more —{" "}
                     {r.difference_paid
-                      ? "the customer has paid this."
-                      : "waiting on the customer to pay this before you can complete the exchange."}
+                      ? "you've confirmed receiving this."
+                      : r.difference_method === "cash"
+                        ? "the customer chose to pay cash. Collect it, then confirm below."
+                        : r.difference_method === "upi"
+                          ? `the customer chose UPI${r.difference_payer_reference ? ` (ref ${r.difference_payer_reference})` : ""}. Check your UPI app, then confirm below.`
+                          : "waiting on the customer to pay this before you can complete the exchange."}
                   </p>
+                )}
+                {awaitingDifferencePayment && r.status === "approved" && (
+                  <button
+                    onClick={() => confirmDifference(r.id)}
+                    disabled={updatingId === r.id}
+                    className="bg-emerald-600 text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+                  >
+                    {updatingId === r.id ? "…" : `Confirm ${formatINR(r.price_difference)} received`}
+                  </button>
                 )}
                 {r.request_type === "exchange" && parseFloat(r.price_difference) < -0.004 && (
                   <p className="text-sm rounded-lg px-3 py-2 bg-amber-50 text-amber-700">

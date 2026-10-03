@@ -40,7 +40,7 @@ export default function AuthStatus() {
   return (
     <div className="text-sm space-y-1 text-center">
       <p>
-        Logged in as <span className="font-medium">{profile?.email}</span>
+        Logged in as <span className="font-medium">{profile?.email ?? profile?.phone ?? "your account"}</span>
       </p>
       <p className="text-gray-500">Role: {profile?.role ?? "unknown"}</p>
       <button onClick={handleLogout} className="text-xs text-red-500 underline">

@@ -12,8 +12,15 @@ from app.core.db import get_db
 from app.core.order_status import (
     DELIVERY_PROOF_REQUIRED_STATUSES,
     RECOGNIZED_STATUSES,
+    SHOP_CANCELABLE_FROM,
     TERMINAL_STATUSES,
     allowed_transitions_for,
+)
+from app.core.payment_confirmation import (
+    cancel_order_and_release_stock,
+    get_payment,
+    mark_paid,
+    reject_submission,
 )
 from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
 from app.core.security import require_role
@@ -23,7 +30,7 @@ from app.core.supabase_admin import (
     update_supabase_user_password,
 )
 from app.core.utils import parse_uuid_or_404
-from app.models import Order, OrderItem, Product, Profile, ReturnRequest, Shop
+from app.models import Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
 from app.schemas.dashboard import (
     AnalyticsOut,
     DashboardMetrics,
@@ -51,10 +58,9 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 # See app/core/order_status.py for the two transition tables (delivery
 # vs. pickup) and the "recognized" (paid) statuses — both are shared
 # with admin.py so platform-wide metrics and this dashboard never drift
-# apart on what counts as a real sale. Note in particular: neither table
-# has an entry leading to "cancelled" anywhere — there is no
-# reject/cancel action a shop owner can take here, by design. The only
-# forward path is confirmed ("Pending" in the UI) -> preparing ->
+# apart on what counts as a real sale. Cancelling is a separate action
+# (POST /orders/{id}/cancel below, see SHOP_CANCELABLE_FROM), not part of
+# either forward table. The only forward path is confirmed ("Pending" in the UI) -> preparing ->
 # packing -> out_for_delivery -> delivered (delivery) or -> packing ->
 # ready_for_pickup -> picked_up (pickup).
 
@@ -399,6 +405,51 @@ async def deactivate_product(
     return {"id": product_id, "deactivated": True}
 
 
+def _dashboard_order_dict(order: Order, buyer_email, buyer_name, item_count, payment: Payment | None) -> dict:
+    return {
+        "id": order.id,
+        "shop_id": order.shop_id,
+        "status": order.status,
+        "fulfillment_type": order.fulfillment_type,
+        "total_amount": order.total_amount,
+        "delivery_address": order.delivery_address,
+        "created_at": order.created_at,
+        "buyer_email": buyer_email,
+        "buyer_name": buyer_name,
+        "item_count": int(item_count or 0),
+        "delivered_at": order.delivered_at,
+        "delivery_proof_photo_url": order.delivery_proof_photo_url,
+        "payment_method": payment.method if payment else None,
+        "payment_status": payment.status if payment else None,
+        "payer_reference": payment.payer_reference if payment else None,
+        "payment_marked_at": payment.marked_paid_at if payment else None,
+    }
+
+
+async def _order_response(db: AsyncSession, order: Order) -> dict:
+    buyer_result = await db.execute(
+        select(Profile.email, Profile.full_name).where(Profile.id == order.user_id)
+    )
+    buyer_email, buyer_name = buyer_result.one()
+    item_count_result = await db.execute(
+        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(OrderItem.order_id == order.id)
+    )
+    payment = await get_payment(db, order.id)
+    return _dashboard_order_dict(order, buyer_email, buyer_name, item_count_result.scalar_one(), payment)
+
+
+async def _load_manageable_order(order_id: str, user: Profile, db: AsyncSession) -> Order:
+    oid = parse_uuid_or_404(order_id, "Order")
+    order = (await db.execute(select(Order).where(Order.id == oid))).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    shop = (await db.execute(select(Shop).where(Shop.id == order.shop_id))).scalar_one_or_none()
+    if not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this order")
+    _require_approved_shop(shop)
+    return order
+
+
 @router.get("/orders", response_model=list[DashboardOrderOut])
 async def incoming_orders(
     shop_id: uuid.UUID | None = Query(default=None),
@@ -414,9 +465,10 @@ async def incoming_orders(
     )
 
     stmt = (
-        select(Order, Profile.email, Profile.full_name, item_counts.c.item_count)
+        select(Order, Profile.email, Profile.full_name, item_counts.c.item_count, Payment)
         .join(Profile, Profile.id == Order.user_id)
         .outerjoin(item_counts, item_counts.c.order_id == Order.id)
+        .outerjoin(Payment, Payment.order_id == Order.id)
     )
     if shop_id is not None:
         stmt = stmt.where(Order.shop_id == shop_id)
@@ -425,21 +477,8 @@ async def incoming_orders(
 
     result = await db.execute(stmt.order_by(Order.created_at.desc()))
     return [
-        {
-            "id": order.id,
-            "shop_id": order.shop_id,
-            "status": order.status,
-            "fulfillment_type": order.fulfillment_type,
-            "total_amount": order.total_amount,
-            "delivery_address": order.delivery_address,
-            "created_at": order.created_at,
-            "buyer_email": buyer_email,
-            "buyer_name": buyer_name,
-            "item_count": int(item_count or 0),
-            "delivered_at": order.delivered_at,
-            "delivery_proof_photo_url": order.delivery_proof_photo_url,
-        }
-        for order, buyer_email, buyer_name, item_count in result.all()
+        _dashboard_order_dict(order, buyer_email, buyer_name, item_count, payment)
+        for order, buyer_email, buyer_name, item_count, payment in result.all()
     ]
 
 
@@ -450,17 +489,7 @@ async def update_order_status(
     user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
     db: AsyncSession = Depends(get_db),
 ):
-    oid = parse_uuid_or_404(order_id, "Order")
-    result = await db.execute(select(Order).where(Order.id == oid))
-    order = result.scalar_one_or_none()
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    shop_result = await db.execute(select(Shop).where(Shop.id == order.shop_id))
-    shop = shop_result.scalar_one_or_none()
-    if not _user_can_manage_shop(shop, user):
-        raise HTTPException(status_code=403, detail="You don't have access to this order")
-    _require_approved_shop(shop)
+    order = await _load_manageable_order(order_id, user, db)
 
     allowed_next = allowed_transitions_for(order.fulfillment_type).get(order.status, set())
     if payload.status not in allowed_next:
@@ -488,34 +517,70 @@ async def update_order_status(
         # unfairly shrink a customer's return window by however long the
         # order took to actually reach them.
         order.delivered_at = datetime.now(timezone.utc)
+        # Cash is collected at hand-over, so reaching a terminal status IS
+        # the moment the shop received it. (A UPI order is only ever
+        # marked paid by the shop's explicit confirmation below.)
+        payment = await get_payment(db, order.id)
+        if payment is not None and payment.method == "cash":
+            mark_paid(payment)
     await db.commit()
 
-    buyer_result = await db.execute(
-        select(Profile.email, Profile.full_name).where(Profile.id == order.user_id)
-    )
-    buyer_email, buyer_name = buyer_result.one()
+    return await _order_response(db, order)
 
-    item_count_result = await db.execute(
-        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
-            OrderItem.order_id == order.id
-        )
-    )
-    item_count = item_count_result.scalar_one()
 
-    return {
-        "id": order.id,
-        "shop_id": order.shop_id,
-        "status": order.status,
-        "fulfillment_type": order.fulfillment_type,
-        "total_amount": order.total_amount,
-        "delivery_address": order.delivery_address,
-        "created_at": order.created_at,
-        "buyer_email": buyer_email,
-        "buyer_name": buyer_name,
-        "item_count": int(item_count),
-        "delivered_at": order.delivered_at,
-        "delivery_proof_photo_url": order.delivery_proof_photo_url,
-    }
+@router.post("/orders/{order_id}/payment/confirm", response_model=DashboardOrderOut)
+async def confirm_order_payment(
+    order_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The shop confirms the money arrived (UPI transfer seen in their app,
+    or cash handed over early). Marks the payment "paid"."""
+    order = await _load_manageable_order(order_id, user, db)
+    payment = await get_payment(db, order.id)
+    if payment is None:
+        raise HTTPException(status_code=400, detail="This order has no payment record")
+    if order.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This order was cancelled")
+    mark_paid(payment)
+    await db.commit()
+    return await _order_response(db, order)
+
+
+@router.post("/orders/{order_id}/payment/reject", response_model=DashboardOrderOut)
+async def reject_order_payment(
+    order_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The shop did NOT receive the money the customer said they sent —
+    puts the payment back to "unpaid" so the customer can retry or switch
+    to cash. Can't undo an already-confirmed payment."""
+    order = await _load_manageable_order(order_id, user, db)
+    payment = await get_payment(db, order.id)
+    if payment is None or payment.status != "submitted":
+        raise HTTPException(status_code=400, detail="There's no pending payment claim to reject")
+    reject_submission(payment)
+    await db.commit()
+    return await _order_response(db, order)
+
+
+@router.post("/orders/{order_id}/cancel", response_model=DashboardOrderOut)
+async def cancel_order_as_shop(
+    order_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Shop cancels an order before it leaves for delivery / is ready for
+    pickup (e.g. out of stock, or the customer never paid). Releases the
+    reserved stock. If money was already received the shop must refund it
+    themselves, directly — the platform never held it."""
+    order = await _load_manageable_order(order_id, user, db)
+    if order.status not in SHOP_CANCELABLE_FROM:
+        raise HTTPException(status_code=400, detail="This order can no longer be cancelled")
+    await cancel_order_and_release_stock(db, order)
+    await db.commit()
+    return await _order_response(db, order)
 
 
 @router.get("/summary")
@@ -803,6 +868,35 @@ async def incoming_returns(
     ]
 
 
+@router.post("/returns/{return_id}/difference/confirm", response_model=ReturnRequestOut)
+async def confirm_difference_paid(
+    return_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The shop confirms it received an exchange's price-difference top-up
+    (UPI or cash) — unblocks marking the exchange "completed"."""
+    rr = (
+        await db.execute(
+            select(ReturnRequest).where(ReturnRequest.id == parse_uuid_or_404(return_id, "Return request"))
+        )
+    ).scalar_one_or_none()
+    if rr is None:
+        raise HTTPException(status_code=404, detail="Return request not found")
+    shop = await _get_accessible_shop_or_403(rr.shop_id, user, db)
+    _require_approved_shop(shop)
+    if rr.request_type != "exchange" or rr.price_difference <= 0:
+        raise HTTPException(status_code=400, detail="This request has no price difference to collect")
+    if rr.status != "approved":
+        raise HTTPException(status_code=400, detail="Approve the exchange first")
+    rr.difference_paid = True
+    if rr.difference_method is None:
+        rr.difference_method = "cash"
+    await db.commit()
+    await db.refresh(rr)
+    return ReturnRequestOut.model_validate(rr).model_dump(mode="json")
+
+
 @router.patch("/returns/{return_id}/status", response_model=ReturnRequestOut)
 async def update_return_status(
     return_id: str,
@@ -836,19 +930,16 @@ async def update_return_status(
           through the shop's normal fulfillment pipeline just like any
           other order. If the replacement costs more than the original
           (ReturnRequest.price_difference > 0), the customer must have
-          already paid that top-up — via
-          POST /returns/{id}/difference-payment — before this is allowed
-          to complete; a shop owner can't be left holding a costlier item
+          already paid that top-up directly to the shop, and the shop
+          confirmed receipt (POST /dashboard/returns/{id}/difference/confirm
+          sets difference_paid), before this is allowed to complete; a shop owner can't be left holding a costlier item
           with no way to collect the difference.
 
-    No live payment-gateway refund call happens here for the REFUND side
-    of things — Payment (app/models/payment.py) only stores the Razorpay
-    ORDER id, not the individual payment id a refund API call needs, so
-    wiring up an actual Razorpay refund (or settling a negative
-    price_difference — a cheaper replacement, where the shop owes money
-    back) is future work; "completed" records that it was settled
-    through whatever process the shop uses today (UPI, bank transfer,
-    cash) and is the number that should reconcile against it.
+    The platform never holds money, so no refund is issued here — for the
+    REFUND side (or a negative price_difference, a cheaper replacement
+    where the shop owes money back) the shop pays the customer back
+    directly (UPI, bank transfer, cash); "completed" records that it was
+    settled and is the number that should reconcile against it.
     """
     rr_result = await db.execute(select(ReturnRequest).where(ReturnRequest.id == parse_uuid_or_404(return_id, "Return request")))
     rr = rr_result.scalar_one_or_none()
@@ -876,7 +967,7 @@ async def update_return_status(
                 status_code=400,
                 detail=(
                     f"The customer still owes ₹{rr.price_difference} for this exchange — "
-                    "this can't be completed until they've paid it"
+                    "confirm you've received it before completing"
                 ),
             )
 
@@ -920,7 +1011,7 @@ async def update_return_status(
             # "confirmed" rather than "pending": there's no separate
             # payment to wait on here — the original purchase, plus
             # whatever top-up difference was required, is already
-            # settled by this point.
+            # settled with the shop by this point.
             original_order_result = await db.execute(select(Order).where(Order.id == rr.order_id))
             original_order = original_order_result.scalar_one_or_none()
             delivery_address = original_order.delivery_address if original_order else ""

@@ -529,7 +529,7 @@ async def platform_metrics(
     total_orders = await db.scalar(select(func.count()).select_from(Order))
     # "confirmed" here means "a real, paid order that's part of the
     # fulfillment pipeline" — i.e. any status a paid order can be in
-    # (confirmed/preparing/ready/delivered), not literally the single
+    # (confirmed/preparing/packing/out_for_delivery/delivered), not literally the single
     # status value "confirmed". Once an order moves past "confirmed" in
     # the shop dashboard it's still very much a sale; it just shouldn't
     # silently drop out of GMV/order counts because it progressed.
@@ -718,9 +718,8 @@ async def get_settings(
         settings_row = PlatformSettings(
             id=1,
             payment_gateways=[
-                {"key": "razorpay", "name": "Razorpay", "enabled": True, "primary": True},
-                {"key": "upi_direct", "name": "UPI Direct", "enabled": True, "primary": False},
-                {"key": "cod", "name": "Cash on Delivery", "enabled": True, "primary": False},
+                {"key": "upi_direct", "name": "UPI (direct to shop)", "enabled": True, "primary": True},
+                {"key": "cod", "name": "Cash on delivery / pickup", "enabled": True, "primary": False},
             ],
         )
         db.add(settings_row)

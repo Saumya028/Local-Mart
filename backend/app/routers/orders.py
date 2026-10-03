@@ -1,32 +1,65 @@
 import uuid
 from decimal import Decimal
 
-import razorpay
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
-from app.core.config import settings
 from app.core.db import get_db
 from app.core.idempotency import idempotent
-from app.core.payment_confirmation import mark_payment_captured, mark_payment_failed
+from app.core.order_status import CUSTOMER_CANCELABLE_FROM
+from app.core.payment_confirmation import (
+    cancel_order_and_release_stock,
+    get_payment,
+    mark_submitted,
+    platform_enabled_methods,
+)
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
 from app.models import Address, Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
+from app.core.upi import PAYMENT_METHODS, build_upi_link, is_valid_payer_reference
 from app.schemas.order import (
+    ChangePaymentMethodRequest,
     CheckoutRequest,
     CheckoutResponse,
+    MarkPaidRequest,
     OrderDetailOut,
     OrderOut,
-    VerifyPaymentRequest,
+    PaymentInfo,
 )
 from app.schemas.shop import ShopOut
 
 router = APIRouter(tags=["orders"])
 
-razorpay_client = razorpay.Client(auth=(settings.razorpay_key_id, settings.razorpay_key_secret))
+
+def shop_takes_upi(shop: Shop) -> bool:
+    """A shop only really accepts UPI if the owner has it switched on AND
+    has given us somewhere to send the money (a UPI id or a QR image)."""
+    return bool(shop.accepts_upi and (shop.upi_id or shop.upi_qr_url))
+
+
+def build_payment_info(order: Order, shop: Shop | None, payment: Payment | None) -> dict | None:
+    if payment is None or shop is None:
+        return None
+    info = PaymentInfo(
+        method=payment.method,
+        status=payment.status,
+        amount=payment.amount,
+        payer_reference=payment.payer_reference,
+        payee_name=shop.name,
+        shop_accepts_upi=shop_takes_upi(shop),
+        shop_accepts_cash=bool(shop.accepts_cash),
+    )
+    if payment.method == "upi":
+        info.upi_id = shop.upi_id
+        info.upi_qr_url = shop.upi_qr_url
+        if shop.upi_id:
+            info.upi_link = build_upi_link(
+                shop.upi_id, shop.name, Decimal(str(payment.amount)), f"Order {str(order.id)[:8]}"
+            )
+    return info.model_dump(mode="json")
 
 
 @router.post("/orders", response_model=CheckoutResponse)
@@ -43,8 +76,7 @@ async def checkout(
     That's generous for a real shopper, who checks out at most a handful
     of times a session, but stops a runaway frontend retry loop or a
     scripted abuser from hammering this endpoint, which is by far the
-    most expensive one in the app: it does row-locking stock updates AND
-    calls the Razorpay API on every single attempt.)
+    most expensive one in the app: it does row-locking stock updates.)
 
     1. Resolve the chosen address (Phase 4: a saved address, not free
        text) and snapshot it into a formatted string — orders should
@@ -59,19 +91,20 @@ async def checkout(
        race-safe (verified in Phase 3 under a simulated concurrent-buyer
        race): two checkouts for the same last unit cannot both succeed.
     5. Create Order + OrderItem rows. Nothing is committed yet.
-    6. Create ONE Razorpay Order for the whole cart total, and a Payment
-       row per order pointing at it.
+    6. Create a Payment row per order with the payment method the
+       customer chose for that shop ("upi" or "cash"). Payment goes
+       DIRECTLY from the customer to the shop — nothing flows through the
+       platform, so there is no gateway call here.
     7. Commit everything together, THEN clear the cart.
 
     Because nothing is committed until step 7, an insufficient-stock
-    error on ANY item, a bad address, or the Razorpay API call itself
-    failing all roll back the whole attempt — no partial orders, no stock
-    decremented for nothing.
+    error on ANY item, a bad address or an invalid payment method rolls
+    back the whole attempt — no partial orders, no stock decremented for
+    nothing.
 
-    This endpoint only ever creates a "pending" order — actual payment
-    confirmation happens via the Razorpay webhook and/or POST
-    /orders/verify-payment (see that endpoint and
-    core/payment_confirmation.py for why there are two paths).
+    Orders are created as "confirmed" straight away; whether the money
+    has actually reached the shop is tracked separately on the Payment
+    row (see core/payment_confirmation.py).
     """
 
     async def do_checkout() -> dict:
@@ -109,6 +142,32 @@ async def checkout(
                     status_code=400, detail=f'"{shop.name}" doesn\'t currently offer pickup'
                 )
 
+        # Payment method per shop — direct to the shop, so each shop must
+        # actually accept the method chosen for it.
+        payment_method_by_shop: dict[uuid.UUID, str] = {}
+        platform_methods = await platform_enabled_methods(db)
+        for shop_id in items_by_shop:
+            shop = shops_by_id[shop_id]
+            method = payload.payment_methods.get(shop_id)
+            if method in PAYMENT_METHODS and method not in platform_methods:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{'UPI' if method == 'upi' else 'Cash'} payments are currently switched off",
+                )
+            if method not in PAYMENT_METHODS:
+                raise HTTPException(
+                    status_code=400, detail=f'Choose how to pay "{shop.name}" (UPI or cash)'
+                )
+            if method == "upi" and not shop_takes_upi(shop):
+                raise HTTPException(
+                    status_code=400, detail=f'"{shop.name}" doesn\'t currently accept UPI payments'
+                )
+            if method == "cash" and not shop.accepts_cash:
+                raise HTTPException(
+                    status_code=400, detail=f'"{shop.name}" doesn\'t currently accept cash'
+                )
+            payment_method_by_shop[shop_id] = method
+
         # An address is only needed at all if at least one shop in THIS
         # cart is being delivered — a cart that's 100% pickup never
         # touches the address book.
@@ -134,7 +193,7 @@ async def checkout(
                 id=uuid.uuid4(),
                 user_id=user.id,
                 shop_id=shop_id,
-                status="pending",
+                status="confirmed",
                 total_amount=Decimal("0"),  # filled in below once we know the line totals
                 fulfillment_type="pickup" if is_pickup else "delivery",
                 delivery_address=None if is_pickup else delivery_address_snapshot,
@@ -172,34 +231,14 @@ async def checkout(
             grand_total += order_total
             created_orders.append(order)
 
-        # Razorpay amounts are integers in the smallest currency unit
-        # (paise for INR) — hence the *100. This call creates the Order
-        # on Razorpay's side (not to be confused with our own Order rows
-        # above) that the frontend's Checkout widget opens a payment
-        # popup against.
-        try:
-            razorpay_order = razorpay_client.order.create(
-                {
-                    "amount": int(grand_total * 100),
-                    "currency": "INR",
-                    "notes": {
-                        "user_id": str(user.id),
-                        "order_ids": ",".join(str(o.id) for o in created_orders),
-                    },
-                }
-            )
-        except razorpay.errors.BadRequestError as e:
-            raise HTTPException(status_code=502, detail=f"Payment provider error: {e}")
-
         for order in created_orders:
             db.add(
                 Payment(
                     id=uuid.uuid4(),
                     order_id=order.id,
-                    provider_ref=razorpay_order["id"],
-                    status="pending",
+                    status="unpaid",
                     amount=order.total_amount,
-                    method="card",
+                    method=payment_method_by_shop[order.shop_id],
                 )
             )
 
@@ -208,66 +247,11 @@ async def checkout(
 
         return {
             "orders": [OrderOut.model_validate(o).model_dump(mode="json") for o in created_orders],
-            "razorpay_order_id": razorpay_order["id"],
-            "razorpay_key_id": settings.razorpay_key_id,
             "total_amount": str(grand_total),
         }
 
     idempotency_redis_key = f"idempotency:checkout:{user.id}:{idempotency_key}"
     return await idempotent(idempotency_redis_key, ttl_seconds=86400, action=do_checkout)
-
-
-@router.post("/orders/verify-payment")
-async def verify_payment(
-    payload: VerifyPaymentRequest,
-    user: Profile = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Called right after Razorpay's Checkout popup reports success (see
-    checkout/page.tsx's `handler`) — a reliable alternative to waiting on
-    the webhook alone. See core/payment_confirmation.py's module
-    docstring for the full reasoning; short version: the webhook has to
-    be registered against wherever this backend is currently reachable,
-    and if that's ever missed, stale, or blocked, a real successful
-    payment sits at "Awaiting payment" forever with nothing to ever flip
-    it. This path doesn't trust the browser's word that payment
-    succeeded — it re-derives the same HMAC signature Razorpay's own
-    docs recommend verifying, using our key secret, which only Razorpay
-    could have produced correctly in the first place.
-    """
-    try:
-        razorpay_client.utility.verify_payment_signature(
-            {
-                "razorpay_order_id": payload.razorpay_order_id,
-                "razorpay_payment_id": payload.razorpay_payment_id,
-                "razorpay_signature": payload.razorpay_signature,
-            }
-        )
-    except razorpay.errors.SignatureVerificationError:
-        raise HTTPException(status_code=400, detail="Payment signature could not be verified")
-
-    # A valid signature proves the payment is real, not that THIS user
-    # is the one who made it — confirm the caller actually owns (at
-    # least one of) the order(s) this Razorpay Order paid for before
-    # touching anything, the same way get_order below scopes lookups to
-    # `Order.user_id == user.id`.
-    owns_order = await db.execute(
-        select(Payment.id)
-        .join(Order, Order.id == Payment.order_id)
-        .where(Payment.provider_ref == payload.razorpay_order_id, Order.user_id == user.id)
-        .limit(1)
-    )
-    if owns_order.first() is None:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    # Safe to call even if the webhook already landed first (or lands a
-    # moment later) — see mark_payment_captured's docstring on why
-    # marking an already-"succeeded" payment succeeded again is a no-op.
-    await mark_payment_captured(db, payload.razorpay_order_id)
-    await db.commit()
-
-    return {"status": "confirmed"}
 
 
 @router.get("/orders", response_model=list[OrderOut])
@@ -287,9 +271,10 @@ async def list_orders(
         .subquery()
     )
     stmt = (
-        select(Order, Shop.name, func.coalesce(item_counts.c.item_count, 0))
+        select(Order, Shop.name, func.coalesce(item_counts.c.item_count, 0), Payment.method, Payment.status)
         .join(Shop, Shop.id == Order.shop_id)
         .outerjoin(item_counts, item_counts.c.order_id == Order.id)
+        .outerjoin(Payment, Payment.order_id == Order.id)
         .where(Order.user_id == user.id)
         .order_by(Order.created_at.desc())
     )
@@ -307,13 +292,15 @@ async def list_orders(
             "item_count": item_count,
             "delivered_at": order.delivered_at,
             "delivery_proof_photo_url": order.delivery_proof_photo_url,
+            "payment_method": pay_method,
+            "payment_status": pay_status,
         }
-        for order, shop_name, item_count in result.all()
+        for order, shop_name, item_count, pay_method, pay_status in result.all()
     ]
 
 
 async def _load_owned_order(db: AsyncSession, order_id: str, user: Profile) -> Order:
-    """Shared by get_order and sync_payment_status below — scoped to the
+    """Shared by get_order and the payment/cancel endpoints below — scoped to the
     requesting user so a shop owner or another customer can never look up
     someone else's order by guessing IDs."""
     oid = parse_uuid_or_404(order_id, "Order")
@@ -367,6 +354,10 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
     data["shop_name"] = shop.name if shop else None
     data["item_count"] = sum(i["quantity"] for i in items)
     data["items"] = items
+    payment = await get_payment(db, order.id)
+    data["payment_method"] = payment.method if payment else None
+    data["payment_status"] = payment.status if payment else None
+    data["payment"] = build_payment_info(order, shop, payment)
     return data
 
 
@@ -376,77 +367,104 @@ async def get_order(
     user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Full order detail for the tracking page: status, shop, and every line
-    item. The Checkout page also polls this right after payment — see
-    sync_payment_status below for how a "pending" order actually gets a
-    chance to become "confirmed" between polls, since this endpoint by
-    itself only reads whatever's already in Postgres.
-    """
+    """Full order detail for the tracking page: status, shop, every line
+    item, and — for the owner only — how to pay the shop directly."""
     order = await _load_owned_order(db, order_id, user)
     return await _build_order_detail(db, order)
 
 
-@router.post("/orders/{order_id}/sync-payment-status", response_model=OrderDetailOut)
-async def sync_payment_status(
+@router.post("/orders/{order_id}/payment/mark-paid", response_model=OrderDetailOut)
+async def mark_order_paid(
+    order_id: str,
+    payload: MarkPaidRequest,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Customer taps "I've paid" after sending money by UPI. This does NOT
+    mark the order paid — the platform can't see the transfer. It moves
+    the payment to "submitted" so the shop sees a "Confirm payment
+    received" prompt (with the UTR, if given) in their dashboard.
+    """
+    order = await _load_owned_order(db, order_id, user)
+    payment = await get_payment(db, order.id)
+    if order.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This order was cancelled")
+    if payment is None or payment.method != "upi":
+        raise HTTPException(status_code=400, detail="This order isn't set to pay by UPI")
+    if payment.status == "paid":
+        return await _build_order_detail(db, order)
+
+    ref = (payload.payer_reference or "").strip()
+    if ref and not is_valid_payer_reference(ref):
+        raise HTTPException(
+            status_code=400,
+            detail="The transaction/UTR number should be 8-30 letters or digits",
+        )
+    mark_submitted(payment, ref or None)
+    await db.commit()
+    return await _build_order_detail(db, order)
+
+
+@router.post("/orders/{order_id}/payment/change-method", response_model=OrderDetailOut)
+async def change_payment_method(
+    order_id: str,
+    payload: ChangePaymentMethodRequest,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch between UPI and cash while the order isn't paid yet (e.g.
+    the shop said it never received the UPI transfer)."""
+    order = await _load_owned_order(db, order_id, user)
+    payment = await get_payment(db, order.id)
+    if order.status == "cancelled" or payment is None:
+        raise HTTPException(status_code=400, detail="This order can't be changed")
+    if payment.status == "paid":
+        raise HTTPException(status_code=400, detail="This order is already paid")
+    if payload.method not in PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="Choose UPI or cash")
+
+    shop_result = await db.execute(select(Shop).where(Shop.id == order.shop_id))
+    shop = shop_result.scalar_one()
+    if payload.method not in await platform_enabled_methods(db):
+        raise HTTPException(status_code=400, detail="That payment method is currently switched off")
+    if payload.method == "upi" and not shop_takes_upi(shop):
+        raise HTTPException(status_code=400, detail="This shop doesn't currently accept UPI")
+    if payload.method == "cash" and not shop.accepts_cash:
+        raise HTTPException(status_code=400, detail="This shop doesn't currently accept cash")
+
+    payment.method = payload.method
+    payment.status = "unpaid"
+    payment.payer_reference = None
+    payment.marked_paid_at = None
+    await db.commit()
+    return await _build_order_detail(db, order)
+
+
+@router.post("/orders/{order_id}/cancel", response_model=OrderDetailOut)
+async def cancel_order(
     order_id: str,
     user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Asks Razorpay directly, right now, what actually happened to this
-    order's payment — a third, on-demand path alongside the webhook and
-    POST /orders/verify-payment (see core/payment_confirmation.py's
-    docstring), and the one that can fix an order that's ALREADY stuck:
-    the other two only ever fire once, at the moment a payment succeeds,
-    so an order that missed both (say, the webhook was never registered
-    for wherever this backend happened to be reachable at the time, AND
-    the browser tab was closed before the verify-payment call went out)
-    has nothing left to un-stick it — nothing else asks Razorpay again
-    later. This does, using Razorpay's `GET /orders/{id}/payments` API
-    with our own server-side key (no signature from the browser needed,
-    since we're asking Razorpay directly rather than trusting anything
-    the client hands us).
-
-    The order tracking page calls this on every poll while status is
-    still "pending" (see app/orders/[id]/page.tsx) — so simply opening
-    that page again is what reconciles an order that got stuck before
-    this endpoint existed, not just new ones going forward.
+    Customer cancels an order — only before the shop starts preparing it
+    and only while nothing has been paid or marked as paid (otherwise the
+    shop may already be holding the customer's money; they'd have to
+    contact the shop). Releases the reserved stock.
     """
     order = await _load_owned_order(db, order_id, user)
-
-    if order.status != "pending":
-        # Nothing to reconcile — either already resolved, or in some
-        # other terminal-ish state (e.g. shipped) this shouldn't touch.
-        return await _build_order_detail(db, order)
-
-    payment_result = await db.execute(select(Payment).where(Payment.order_id == order.id))
-    payment = payment_result.scalar_one_or_none()
-    if payment is None:
-        return await _build_order_detail(db, order)
-
-    try:
-        remote = razorpay_client.order.payments(payment.provider_ref)
-    except razorpay.errors.BadRequestError:
-        # Razorpay itself doesn't recognize this order_id (shouldn't
-        # normally happen) — nothing to reconcile against, so just
-        # report the order as it stands rather than failing the whole
-        # page load over it.
-        return await _build_order_detail(db, order)
-
-    remote_payments = remote.get("items", [])
-    captured = next((p for p in remote_payments if p.get("status") == "captured"), None)
-    failed = next((p for p in remote_payments if p.get("status") == "failed"), None)
-
-    if captured is not None:
-        await mark_payment_captured(db, payment.provider_ref, method=captured.get("method"))
-        await db.commit()
-        await db.refresh(order)
-    elif failed is not None and not any(p.get("status") == "captured" for p in remote_payments):
-        await mark_payment_failed(db, payment.provider_ref)
-        await db.commit()
-        await db.refresh(order)
-    # Else: still genuinely pending on Razorpay's side too (e.g. the
-    # shopper hasn't finished the popup yet) — leave it as is.
-
+    payment = await get_payment(db, order.id)
+    if order.status not in CUSTOMER_CANCELABLE_FROM:
+        raise HTTPException(
+            status_code=400,
+            detail="The shop has already started on this order — please contact the shop to cancel",
+        )
+    if payment is not None and payment.status in ("submitted", "paid"):
+        raise HTTPException(
+            status_code=400,
+            detail="This order has a payment on record — please contact the shop to cancel",
+        )
+    await cancel_order_and_release_stock(db, order)
+    await db.commit()
     return await _build_order_detail(db, order)

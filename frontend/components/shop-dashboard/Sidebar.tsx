@@ -2,7 +2,7 @@
 
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "staff";
+export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "payments" | "staff";
 
 // Which tabs each role can see, in nav order. Purely a UI convenience —
 // the backend independently enforces the same boundaries on every
@@ -12,8 +12,8 @@ export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventor
 // except Staff (owner-only); a delivery hire gets Orders alone — the
 // one tab their whole job is built around.
 const ROLE_TABS: Record<string, TabKey[]> = {
-  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "staff"],
-  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "staff"],
+  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "staff"],
+  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "staff"],
   manager: ["dashboard", "orders", "returns", "products", "inventory", "analytics"],
   delivery_partner: ["orders"],
 };
@@ -105,6 +105,17 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
       <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
         <path d="M3.5 16.5V3.5M3.5 16.5h13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         <path d="M6.5 14v-3M10 14V7M13.5 14V9.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "payments",
+    label: "Payments",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <rect x="2.5" y="5" width="15" height="10" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M2.5 8.5h15" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M5.5 12.5h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
     ),
   },

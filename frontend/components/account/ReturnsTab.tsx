@@ -3,29 +3,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
+import UpiPayPanel from "@/components/payment/UpiPayPanel";
 import { ReturnRequest, returnStatusMeta } from "./types";
 
-// Same loader as app/checkout/page.tsx — duplicated rather than shared,
-// since it's a dozen lines and pulling it into a common module isn't
-// worth the churn for this one extra call site. `window.Razorpay` is
-// global once loaded either way, so calling this here after checkout
-// already loaded it on some earlier page view is just an instant no-op.
-let razorpayScriptPromise: Promise<void> | null = null;
-function loadRazorpayScript(): Promise<void> {
-  if (typeof window !== "undefined" && (window as any).Razorpay) {
-    return Promise.resolve();
-  }
-  if (!razorpayScriptPromise) {
-    razorpayScriptPromise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
-      document.body.appendChild(script);
-    });
-  }
-  return razorpayScriptPromise;
-}
+type DifferenceInfo = {
+  amount: string;
+  method: string | null;
+  payee_name: string | null;
+  upi_id: string | null;
+  upi_qr_url: string | null;
+  upi_link: string | null;
+  shop_accepts_upi: boolean;
+  shop_accepts_cash: boolean;
+};
 
 export function ReturnsTab() {
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
@@ -33,6 +23,10 @@ export function ReturnsTab() {
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
+  // Which return's pay-the-difference panel is open, and what the
+  // backend says about where to send the money.
+  const [openPayId, setOpenPayId] = useState<string | null>(null);
+  const [diffInfo, setDiffInfo] = useState<DifferenceInfo | null>(null);
 
   async function load() {
     try {
@@ -62,54 +56,30 @@ export function ReturnsTab() {
     }
   }
 
-  // Opens Razorpay's popup for the exchange's price-difference top-up —
-  // the same POST-then-verify pattern as checkout/page.tsx's
-  // openRazorpayCheckout, just against
-  // /returns/{id}/difference-payment + /verify-difference-payment
-  // instead of the main /orders + /orders/verify-payment pair.
-  async function payDifference(r: ReturnRequest) {
+  // Opens the pay-the-shop panel for an exchange's price-difference
+  // top-up. Payment goes straight to the shop (UPI or cash); the shop
+  // confirms receipt, which is what lets them complete the exchange.
+  async function openDifference(r: ReturnRequest) {
+    setError(null);
+    try {
+      const info: DifferenceInfo = await apiFetch(`/returns/${r.id}/difference-payment`);
+      setDiffInfo(info);
+      setOpenPayId(r.id);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function chooseMethod(r: ReturnRequest, method: "upi" | "cash", payerReference?: string) {
     setPayingId(r.id);
     setError(null);
     try {
-      const data = await apiFetch(`/returns/${r.id}/difference-payment`, { method: "POST" });
-      await loadRazorpayScript();
-      const razorpay = new (window as any).Razorpay({
-        key: data.razorpay_key_id,
-        order_id: data.razorpay_order_id,
-        amount: Math.round(parseFloat(data.amount) * 100),
-        currency: "INR",
-        name: "LocalMart",
-        description: `Price difference for exchanging ${r.product_name ?? "an item"}`,
-        handler: async function (response: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) {
-          try {
-            await apiFetch(`/returns/${r.id}/verify-difference-payment`, {
-              method: "POST",
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              }),
-            });
-          } catch {
-            // Same reasoning as checkout: a verification network blip
-            // right after a real payment isn't a sign the payment
-            // failed, so this stays reassuring rather than alarming.
-          } finally {
-            await load();
-          }
-        },
-        modal: {
-          ondismiss: function () {
-            setPayingId(null);
-          },
-        },
-        theme: { color: "#2563eb" },
+      const info: DifferenceInfo = await apiFetch(`/returns/${r.id}/difference-payment`, {
+        method: "POST",
+        body: JSON.stringify({ method, payer_reference: payerReference || null }),
       });
-      razorpay.open();
+      setDiffInfo(info);
+      await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -168,17 +138,64 @@ export function ReturnsTab() {
               <div className="rounded-lg px-3 py-2 bg-amber-50 text-amber-700 text-sm flex items-center justify-between gap-3">
                 <span>
                   {r.difference_paid
-                    ? `Price difference of ₹${r.price_difference} paid — waiting on the shop.`
+                    ? `Price difference of ₹${r.price_difference} received by the shop.`
                     : `This exchange costs ₹${r.price_difference} more.`}
                 </span>
-                {!r.difference_paid && r.status === "approved" && (
+                {!r.difference_paid && r.status === "approved" && openPayId !== r.id && (
                   <button
-                    onClick={() => payDifference(r)}
-                    disabled={payingId === r.id}
-                    className="shrink-0 text-xs font-medium bg-amber-600 text-white rounded-lg px-3 py-1.5 disabled:opacity-50"
+                    onClick={() => openDifference(r)}
+                    className="shrink-0 text-xs font-medium bg-amber-600 text-white rounded-lg px-3 py-1.5"
                   >
-                    {payingId === r.id ? "Opening…" : `Pay ₹${r.price_difference}`}
+                    {r.difference_method ? "Payment details" : `Pay ₹${r.price_difference}`}
                   </button>
+                )}
+              </div>
+            )}
+
+            {openPayId === r.id && diffInfo && !r.difference_paid && (
+              <div className="space-y-3">
+                <div className="flex gap-4 text-sm">
+                  {diffInfo.shop_accepts_upi && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={diffInfo.method === "upi"}
+                        onChange={() => chooseMethod(r, "upi")}
+                        disabled={payingId === r.id}
+                      />
+                      UPI
+                    </label>
+                  )}
+                  {diffInfo.shop_accepts_cash && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={diffInfo.method === "cash"}
+                        onChange={() => chooseMethod(r, "cash")}
+                        disabled={payingId === r.id}
+                      />
+                      Cash (pay the shop in person)
+                    </label>
+                  )}
+                </div>
+                {diffInfo.method === "upi" && (
+                  <UpiPayPanel
+                    amount={diffInfo.amount}
+                    payeeName={diffInfo.payee_name}
+                    upiId={diffInfo.upi_id}
+                    upiQrUrl={diffInfo.upi_qr_url}
+                    upiLink={diffInfo.upi_link}
+                    status={r.difference_payer_reference ? "submitted" : "unpaid"}
+                    payerReference={r.difference_payer_reference}
+                    busy={payingId === r.id}
+                    onMarkPaid={(ref) => chooseMethod(r, "upi", ref)}
+                  />
+                )}
+                {diffInfo.method === "cash" && (
+                  <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                    Hand ₹{diffInfo.amount} to {diffInfo.payee_name ?? "the shop"} — they&apos;ll mark it received
+                    and complete your exchange.
+                  </p>
                 )}
               </div>
             )}

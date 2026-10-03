@@ -1,6 +1,6 @@
 export type AdminUser = {
   id: string;
-  email: string;
+  email: string | null;
   full_name: string | null;
   role: string;
   created_at: string;
@@ -20,7 +20,7 @@ export type AdminShop = {
   rejection_reason: string | null;
   created_at: string;
   owner_id: string;
-  owner_email: string;
+  owner_email: string | null;
   owner_name: string | null;
   location: string | null;
 };

@@ -14,27 +14,6 @@ function generateIdempotencyKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Loads Razorpay's Checkout.js exactly once, however many times this
-// function gets called — the script tag registers `window.Razorpay`
-// globally, so re-injecting it on every mount would be wasteful (and
-// briefly leave `window.Razorpay` undefined again while it reloads).
-let razorpayScriptPromise: Promise<void> | null = null;
-function loadRazorpayScript(): Promise<void> {
-  if (typeof window !== "undefined" && (window as any).Razorpay) {
-    return Promise.resolve();
-  }
-  if (!razorpayScriptPromise) {
-    razorpayScriptPromise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("Failed to load Razorpay checkout"));
-      document.body.appendChild(script);
-    });
-  }
-  return razorpayScriptPromise;
-}
-
 type Address = { id: string; label: string; line1: string; city: string; is_default: boolean };
 
 type CartShop = {
@@ -43,7 +22,13 @@ type CartShop = {
   pickup_enabled: boolean;
   address_line1: string | null;
   city: string | null;
+  // Direct payment to the shop — see backend cart.py. UPI only counts if
+  // the owner has it on AND gave a UPI id / QR to pay to.
+  accepts_upi: boolean;
+  accepts_cash: boolean;
 };
+
+type PayMethod = "upi" | "cash";
 
 type CartItem = {
   product: { id: string; name: string; price: string; images: string[] };
@@ -53,9 +38,14 @@ type CartItem = {
 };
 
 type CheckoutResponse = {
-  orders: { id: string; shop_id: string; total_amount: string; fulfillment_type?: string }[];
-  razorpay_order_id: string;
-  razorpay_key_id: string;
+  orders: {
+    id: string;
+    shop_id: string;
+    shop_name?: string | null;
+    total_amount: string;
+    fulfillment_type?: string;
+    payment_method?: string | null;
+  }[];
   total_amount: string;
 };
 
@@ -86,6 +76,10 @@ export default function CheckoutPage() {
   // in the same checkout.
   const [fulfillment, setFulfillment] = useState<Record<string, "delivery" | "pickup">>({});
 
+  // Per-shop payment method, chosen straight away since the customer pays
+  // each shop directly (UPI or cash) — nothing goes through LocalMart.
+  const [payment, setPayment] = useState<Record<string, PayMethod>>({});
+
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -105,6 +99,17 @@ export default function CheckoutPage() {
         const next = { ...prev };
         for (const item of data.items) {
           if (item.shop && !(item.shop.id in next)) next[item.shop.id] = "delivery";
+        }
+        return next;
+      });
+      setPayment((prev) => {
+        const next = { ...prev };
+        for (const item of data.items) {
+          const shop = item.shop;
+          if (shop && !(shop.id in next)) {
+            if (shop.accepts_upi) next[shop.id] = "upi";
+            else if (shop.accepts_cash) next[shop.id] = "cash";
+          }
         }
         return next;
       });
@@ -137,18 +142,6 @@ export default function CheckoutPage() {
     loadAddresses();
   }, []);
 
-  // Preload Checkout.js as soon as the page mounts rather than waiting
-  // until the "Continue to payment" click, so opening the Razorpay popup
-  // right after `startCheckout` resolves doesn't have to wait on a slow
-  // script fetch too.
-  useEffect(() => {
-    loadRazorpayScript().catch(() => {
-      // Surfaced again (and more visibly) if openRazorpayCheckout()
-      // itself fails below — no need to show an error just for a
-      // background preload.
-    });
-  }, []);
-
   const shopGroups = useMemo(() => {
     const byShop = new Map<string, { shop: CartShop | null; items: CartItem[] }>();
     for (const item of cartItems) {
@@ -165,8 +158,15 @@ export default function CheckoutPage() {
     (g) => g.shop && (fulfillment[g.shop.id] ?? "delivery") === "delivery"
   );
 
+  // A shop that accepts neither UPI nor cash can't be ordered from.
+  const unpayableShop = shopGroups.find((g) => g.shop && !g.shop.accepts_upi && !g.shop.accepts_cash);
+
   async function startCheckout(e: FormEvent) {
     e.preventDefault();
+    if (unpayableShop) {
+      setError(`"${unpayableShop.shop?.name}" isn't accepting payments right now. Remove its items to continue.`);
+      return;
+    }
     if (needsAddress && !selectedAddressId) {
       setError("Please add or select a delivery address.");
       return;
@@ -185,10 +185,19 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           address_id: needsAddress ? selectedAddressId : null,
           pickup_shop_ids: pickupShopIds,
+          payment_methods: Object.fromEntries(
+            shopGroups.filter((g) => g.shop).map((g) => [g.shop!.id, payment[g.shop!.id]])
+          ),
         }),
       });
+      // A single order goes straight to its page, where the UPI QR /
+      // cash instructions are shown. Several orders (one per shop) land
+      // on the summary below so each can be opened in turn.
+      if (data.orders.length === 1) {
+        window.location.href = `/orders/${data.orders[0].id}`;
+        return;
+      }
       setCheckoutResult(data);
-      await openRazorpayCheckout(data, setError);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -196,37 +205,33 @@ export default function CheckoutPage() {
     }
   }
 
-  // Once payment either succeeds or the popup is dismissed, we send the
-  // shopper straight to order tracking — confirmation itself happens via
-  // POST /orders/verify-payment (called from the Razorpay handler below)
-  // and/or the webhook, and that page already polls for it (see
-  // app/orders/[id]/page.tsx).
   if (checkoutResult) {
     return (
-      <main className="max-w-md mx-auto px-6 py-10 text-center space-y-3">
-        <p className="text-lg font-semibold">Order placed — ₹{checkoutResult.total_amount}</p>
-        <p className="text-sm text-gray-500">
-          {error
-            ? error
-            : "Complete payment in the Razorpay window. We'll confirm your order as soon as payment lands."}
-        </p>
-        <div className="space-y-1">
+      <main className="max-w-md mx-auto px-6 py-10 space-y-4">
+        <div className="text-center space-y-1">
+          <p className="text-lg font-semibold">Orders placed — ₹{checkoutResult.total_amount}</p>
+          <p className="text-sm text-gray-500">
+            You pay each shop directly. Open each order to pay by UPI, or pay cash when you receive it.
+          </p>
+        </div>
+        <div className="space-y-2">
           {checkoutResult.orders.map((o) => (
-            <a key={o.id} href={`/orders/${o.id}`} className="block text-sm text-blue-600 underline">
-              Track order #{o.id.slice(0, 8)}
-              {o.fulfillment_type === "pickup" ? " (Pickup)" : ""}
+            <a
+              key={o.id}
+              href={`/orders/${o.id}`}
+              className="flex items-center justify-between border rounded-lg p-3 text-sm hover:border-blue-400"
+            >
+              <span>
+                Order #{o.id.slice(0, 8)}
+                {o.fulfillment_type === "pickup" ? " (Pickup)" : ""}
+                <span className="block text-xs text-gray-400">₹{o.total_amount}</span>
+              </span>
+              <span className="text-xs text-blue-600 underline">
+                {payment[o.shop_id] === "cash" ? "View order" : "Pay now"}
+              </span>
             </a>
           ))}
         </div>
-        {error && (
-          <button
-            type="button"
-            onClick={() => openRazorpayCheckout(checkoutResult, setError)}
-            className="text-sm text-blue-600 underline"
-          >
-            Retry payment
-          </button>
-        )}
       </main>
     );
   }
@@ -281,6 +286,39 @@ export default function CheckoutPage() {
                       {shop.city ? `, ${shop.city}` : ""}
                     </p>
                   )}
+                  {shop && (shop.accepts_upi || shop.accepts_cash) ? (
+                    <div className="pt-2 border-t space-y-1">
+                      <p className="text-xs font-medium text-gray-600">Pay {shop.name} directly</p>
+                      <div className="flex flex-wrap gap-3">
+                        {shop.accepts_upi && (
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`payment-${shop.id}`}
+                              checked={payment[shop.id] === "upi"}
+                              onChange={() => setPayment((prev) => ({ ...prev, [shop.id]: "upi" }))}
+                            />
+                            UPI (QR / app)
+                          </label>
+                        )}
+                        {shop.accepts_cash && (
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`payment-${shop.id}`}
+                              checked={payment[shop.id] === "cash"}
+                              onChange={() => setPayment((prev) => ({ ...prev, [shop.id]: "cash" }))}
+                            />
+                            {choice === "pickup" ? "Cash at pickup" : "Cash on delivery"}
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    shop && (
+                      <p className="text-xs text-red-500">This shop isn&apos;t accepting payments right now.</p>
+                    )
+                  )}
                 </div>
               );
             })}
@@ -333,89 +371,22 @@ export default function CheckoutPage() {
 
           <button
             type="submit"
-            disabled={loading || (needsAddress && !selectedAddressId) || cartItems.length === 0}
+            disabled={
+              loading ||
+              (needsAddress && !selectedAddressId) ||
+              cartItems.length === 0 ||
+              !!unpayableShop
+            }
             className="w-full bg-blue-600 text-white rounded-md py-2 text-sm font-medium disabled:opacity-50"
           >
-            {loading ? "Creating order…" : "Continue to payment"}
+            {loading ? "Placing order…" : "Place order"}
           </button>
 
           <p className="text-xs text-gray-400 text-center">
-            Test mode — card 4111 1111 1111 1111, any future expiry, any CVC/OTP.
+            You pay the shop directly by UPI or cash — LocalMart never handles your money.
           </p>
         </form>
       )}
     </main>
   );
-}
-
-// Opens Razorpay's own hosted payment popup. Razorpay's client-side
-// `handler` result isn't trustworthy on its own (it's just what the
-// browser says happened) — but it does hand back a signed proof
-// (razorpay_payment_id/order_id/signature) that only Razorpay itself
-// could have produced, so we send that straight to POST
-// /orders/verify-payment, which re-derives and checks that signature
-// server-side before confirming anything. That's what actually flips
-// the order to "confirmed" here — not this callback by itself. The
-// signed Razorpay webhook (routers/webhooks.py) still runs too and can
-// confirm the same order independently; either one landing first is
-// fine (see core/payment_confirmation.py's docstring on the backend for
-// why both exist).
-async function openRazorpayCheckout(
-  data: CheckoutResponse,
-  setError: (msg: string | null) => void
-) {
-  try {
-    await loadRazorpayScript();
-  } catch {
-    setError("Couldn't load the payment window. Please check your connection and retry.");
-    return;
-  }
-
-  const amountInPaise = Math.round(parseFloat(data.total_amount) * 100);
-
-  const razorpay = new (window as any).Razorpay({
-    key: data.razorpay_key_id,
-    order_id: data.razorpay_order_id,
-    amount: amountInPaise,
-    currency: "INR",
-    name: "LocalMart",
-    description: `Order${data.orders.length > 1 ? "s" : ""} #${data.orders
-      .map((o) => o.id.slice(0, 8))
-      .join(", ")}`,
-    handler: async function (response: {
-      razorpay_order_id: string;
-      razorpay_payment_id: string;
-      razorpay_signature: string;
-    }) {
-      try {
-        await apiFetch("/orders/verify-payment", {
-          method: "POST",
-          body: JSON.stringify({
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_signature: response.razorpay_signature,
-          }),
-        });
-        setError(null);
-      } catch {
-        // Verification itself failed to go through (e.g. a network
-        // blip right after payment) — not a sign the payment failed.
-        // The webhook is still in flight independently and the order
-        // tracking page keeps polling, so this stays reassuring rather
-        // than alarming.
-        setError("Payment received — confirming your order now. This can take a moment.");
-      }
-    },
-    modal: {
-      ondismiss: function () {
-        setError("Payment window closed before completing payment. You can retry below.");
-      },
-    },
-  });
-
-  razorpay.on("payment.failed", function () {
-    setError("Payment failed. You can retry below.");
-  });
-
-  razorpay.open();
 }

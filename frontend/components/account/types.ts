@@ -8,7 +8,35 @@ export type AccountOrder = {
   item_count: number;
   delivery_address: string | null;
   created_at: string;
+  // Direct-payment state — see backend app/models/payment.py. Null for
+  // very old orders with no payment row.
+  payment_method?: string | null;
+  payment_status?: string | null;
 };
+
+export type PaymentInfo = {
+  method: string;
+  status: string;
+  amount: string;
+  payer_reference: string | null;
+  payee_name: string | null;
+  upi_id: string | null;
+  upi_qr_url: string | null;
+  upi_link: string | null;
+  shop_accepts_upi: boolean;
+  shop_accepts_cash: boolean;
+};
+
+export function paymentBadge(order: { payment_method?: string | null; payment_status?: string | null; status: string }): {
+  label: string;
+  className: string;
+} | null {
+  if (!order.payment_status || order.status === "cancelled") return null;
+  if (order.payment_status === "paid") return { label: "Paid", className: "bg-emerald-50 text-emerald-600" };
+  if (order.payment_status === "submitted") return { label: "Payment sent — awaiting shop", className: "bg-amber-50 text-amber-600" };
+  if (order.payment_method === "cash") return { label: "Pay cash on receipt", className: "bg-gray-100 text-gray-600" };
+  return { label: "Payment due (UPI)", className: "bg-red-50 text-red-600" };
+}
 
 export function isPickupOrder(order: { fulfillment_type: string }): boolean {
   return order.fulfillment_type === "pickup";
@@ -33,6 +61,7 @@ export type OrderDetail = AccountOrder & {
   delivered_at: string | null;
   delivery_proof_photo_url?: string | null;
   shop: { id: string; name: string; address_line1?: string | null; city?: string | null } | null;
+  payment?: PaymentInfo | null;
 };
 
 export type ReturnRequestType = "return" | "exchange";
@@ -60,6 +89,8 @@ export type ReturnRequest = {
   // "return" — there's no replacement item to compare against.
   price_difference: string;
   difference_paid: boolean;
+  difference_method?: string | null;
+  difference_payer_reference?: string | null;
   new_order_id: string | null;
 };
 
@@ -140,6 +171,7 @@ export type AccountProfile = {
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
   pending: { label: "Payment Pending", className: "bg-gray-100 text-gray-600" },
+  cancelled: { label: "Cancelled", className: "bg-red-50 text-red-600" },
   confirmed: { label: "Confirmed", className: "bg-blue-50 text-blue-600" },
   preparing: { label: "Preparing", className: "bg-blue-50 text-blue-600" },
   packing: { label: "Packing", className: "bg-indigo-50 text-indigo-600" },

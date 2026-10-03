@@ -20,7 +20,7 @@ app/
     dashboard.py, admin.py
   routers/
     health.py, auth.py, categories.py, products.py
-    cart.py, addresses.py, webhooks.py
+    cart.py, addresses.py
     shops.py, orders.py, shop_dashboard.py, admin.py
 migrations/                 # Alembic (0001-0008 — 0005 added the Admin Panel's shop-approval/user-suspend/settings tables, 0006 added shop verification documents + rejection reason, 0007 added profile phone + wishlist for the My Account page, 0008 made profiles.email nullable for phone-only Login accounts)
 scripts/
@@ -149,8 +149,7 @@ follow-up, not a surprise later.
 
 - **`core/rate_limit.py` - Redis-backed, fixed-window, fails open.**
   Applied to checkout (10/min per user - the most expensive endpoint in
-  the app, since it does row-locking stock updates AND calls the
-  Razorpay API on every attempt) and `/auth/me` (30/min per IP - the one
+  the app, since it does row-locking stock updates) and `/auth/me` (30/min per IP - the one
   auth-adjacent endpoint this backend owns; real login/signup lives
   entirely in Supabase Auth, which the frontend calls directly and never
   routes through this backend, so there's no login endpoint here to
@@ -312,9 +311,10 @@ follow-up, not a surprise later.
   A real `DELETE` would violate the `RESTRICT` foreign key from
   `order_items` the moment anyone's ever bought the product.
 - **Order status transitions are a fixed forward-only map**
-  (`confirmed -> shipped/cancelled`, `shipped -> delivered`) -
-  `pending -> confirmed/payment_failed` is deliberately absent, since only
-  Razorpay's webhook is allowed to make that call.
+  (see `core/order_status.py`). Payments are direct customer -> shop, so
+  orders start at `confirmed`; payment state lives on `payments`
+  (`unpaid -> submitted -> paid`, confirmed by the shop). `cancelled` is a
+  separate action that releases stock.
 - **Cache invalidation is wired up properly.** `core/cache.py`'s
   `invalidate()` helper is called by every dashboard write that changes
   customer-visible data - a price or stock change is visible to shoppers

@@ -14,8 +14,8 @@ from app.core.request_context import set_request_id
 
 # Logging must be configured, and Sentry initialized, before anything
 # else below has a chance to log or raise — including router imports,
-# which construct module-level objects (e.g. the Razorpay client in
-# orders.py/webhooks.py) that could themselves warn or fail.
+# which construct module-level objects (e.g. the Redis client in
+# orders.py) that could themselves warn or fail.
 setup_logging(settings.log_level)
 init_sentry()
 
@@ -33,7 +33,6 @@ from app.routers import (  # noqa: E402
     shop_dashboard,
     shops,
     stats,
-    webhooks,
     wishlist,
 )
 
@@ -155,7 +154,6 @@ app.include_router(wishlist.router)
 app.include_router(stats.router)
 app.include_router(shop_dashboard.router)
 app.include_router(admin.router)
-app.include_router(webhooks.router)
 
 
 @app.get("/")

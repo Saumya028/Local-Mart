@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
+import UpiPayPanel from "@/components/payment/UpiPayPanel";
 import {
   OrderDetail,
   OrderDetailItem,
@@ -15,7 +17,7 @@ import {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Payment pending",
-  confirmed: "Confirmed",
+  confirmed: "Order placed",
   preparing: "Preparing",
   packing: "Packing your order",
   out_for_delivery: "Out for delivery",
@@ -23,14 +25,23 @@ const STATUS_LABEL: Record<string, string> = {
   ready_for_pickup: "Ready for pickup",
   picked_up: "Picked up",
   payment_failed: "Payment failed",
+  cancelled: "Cancelled",
 };
 
-export default function OrderDetailPage({ params }: { params: { id: string } }) {
+export default function OrderDetailPage() {
+  // useParams() instead of the `params` prop: in this Next.js version the
+  // prop is a Promise, and reading `params.id` off it directly is
+  // deprecated (and can come back undefined, which would request
+  // /orders/undefined and show "Order not found").
+  const params = useParams<{ id: string }>();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<OrderDetailItem | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [cancellingOrder, setCancellingOrder] = useState(false);
 
   async function load() {
     try {
@@ -51,43 +62,50 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
-  // Actively asks Razorpay what really happened to this payment, rather
-  // than just re-reading whatever's already in Postgres — see
-  // sync-payment-status's docstring on the backend for why this is what
-  // actually un-sticks an order that's been sitting at "pending" since
-  // before this existed, not only ones placed from now on.
-  async function sync() {
-    try {
-      const data = await apiFetch(`/orders/${params.id}/sync-payment-status`, { method: "POST" });
-      setOrder(data);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  // Initial load: reconcile with Razorpay right away rather than a plain
-  // read, so landing on this page (including an old bookmark/link to an
-  // order that got stuck before sync-payment-status existed) is itself
-  // enough to pick up a payment that already succeeded.
   useEffect(() => {
-    sync();
+    load();
     loadReturns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  // Poll every 4s ONLY while status is still "pending", re-syncing with
-  // Razorpay on each check (not just re-reading the DB) — payment
-  // confirmation can arrive via webhook, via the checkout page's own
-  // verify call, or be picked up right here. Each successful load
-  // schedules the next check; once status leaves "pending", nothing
-  // schedules another one and polling stops itself.
+  // While the customer is waiting on the shop to confirm a UPI payment,
+  // quietly re-check every 15s so the page flips to "Paid" on its own.
   useEffect(() => {
-    if (!order || order.status !== "pending") return;
-    const timeoutId = setTimeout(sync, 4000);
+    if (!order || order.payment?.status !== "submitted") return;
+    const timeoutId = setTimeout(load, 15000);
     return () => clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order]);
+
+  async function paymentAction(path: string, body?: object) {
+    setPaymentBusy(true);
+    try {
+      const data = await apiFetch(`/orders/${params.id}${path}`, {
+        method: "POST",
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      setOrder(data);
+      setError(null);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
+  async function cancelOrder() {
+    if (!window.confirm("Cancel this order?")) return;
+    setCancellingOrder(true);
+    try {
+      const data = await apiFetch(`/orders/${params.id}/cancel`, { method: "POST" });
+      setOrder(data);
+      setActionError(null);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setCancellingOrder(false);
+    }
+  }
 
   async function cancelReturn(returnId: string) {
     setCancellingId(returnId);
@@ -132,9 +150,6 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         {order.shop && <p className="text-sm text-gray-500">{order.shop.name}</p>}
         <p className="text-sm mt-2 font-medium">
           {STATUS_LABEL[order.status] ?? order.status}
-          {order.status === "pending" && (
-            <span className="text-xs text-gray-400 font-normal"> — checking for updates…</span>
-          )}
         </p>
         {eligibleForReturn && order.delivered_at && (
           <p className="text-xs text-gray-400 mt-1">
@@ -152,6 +167,66 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           </a>
         )}
       </div>
+
+      {actionError && <p className="text-sm text-red-500">{actionError}</p>}
+
+      {order.payment && order.status !== "cancelled" && (
+        <div className="space-y-3">
+          {order.payment.method === "upi" ? (
+            <>
+              <UpiPayPanel
+                amount={order.payment.amount}
+                payeeName={order.payment.payee_name}
+                upiId={order.payment.upi_id}
+                upiQrUrl={order.payment.upi_qr_url}
+                upiLink={order.payment.upi_link}
+                status={order.payment.status}
+                payerReference={order.payment.payer_reference}
+                busy={paymentBusy}
+                onMarkPaid={(ref) => paymentAction("/payment/mark-paid", { payer_reference: ref || null })}
+              />
+              {order.payment.status !== "paid" && order.payment.shop_accepts_cash && (
+                <button
+                  onClick={() => paymentAction("/payment/change-method", { method: "cash" })}
+                  disabled={paymentBusy}
+                  className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  Pay cash {isPickup ? "at pickup" : "on delivery"} instead
+                </button>
+              )}
+            </>
+          ) : (
+            <div
+              className={`rounded-xl text-sm px-4 py-3 ${
+                order.payment.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-gray-50 text-gray-700"
+              }`}
+            >
+              {order.payment.status === "paid"
+                ? `₹${order.payment.amount} paid in cash.`
+                : `Pay ₹${order.payment.amount} in cash ${isPickup ? "when you pick up your order" : "when your order is delivered"}.`}
+              {order.payment.status !== "paid" && order.payment.shop_accepts_upi && (
+                <button
+                  onClick={() => paymentAction("/payment/change-method", { method: "upi" })}
+                  disabled={paymentBusy}
+                  className="block text-xs text-blue-600 hover:underline mt-1 disabled:opacity-50"
+                >
+                  Pay by UPI instead
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {order.status === "confirmed" && order.payment && ["unpaid"].includes(order.payment.status) && (
+        <button
+          onClick={cancelOrder}
+          disabled={cancellingOrder}
+          className="text-xs text-red-500 hover:underline disabled:opacity-50"
+        >
+          {cancellingOrder ? "Cancelling…" : "Cancel this order"}
+        </button>
+      )}
 
       <div className="space-y-3">
         {order.items.map((item) => {

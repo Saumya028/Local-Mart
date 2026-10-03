@@ -22,6 +22,11 @@ class CheckoutRequest(BaseModel):
     # (rejected with a 400 if that shop doesn't offer pickup); every
     # other shop in the cart gets "delivery" to address_id.
     pickup_shop_ids: list[uuid.UUID] = []
+    # shop_id -> "upi" | "cash", one entry per shop in the cart. Payment
+    # goes straight from the customer to each shop, so it's chosen per
+    # shop (= per order). Validated in routers/orders.py against what
+    # each shop actually accepts.
+    payment_methods: dict[uuid.UUID, str] = {}
 
 
 class OrderOut(BaseModel):
@@ -56,6 +61,30 @@ class OrderOut(BaseModel):
     # order-tracking page as proof of delivery, not just in the shop's
     # dashboard.
     delivery_proof_photo_url: str | None = None
+    # Direct-payment state, filled in by a join on payments — see
+    # app/models/payment.py. None only for very old orders with no
+    # Payment row.
+    payment_method: str | None = None
+    payment_status: str | None = None
+
+
+class PaymentInfo(BaseModel):
+    """Everything the customer's order page needs to pay the shop
+    directly. The shop's UPI id / QR are only ever returned here, to the
+    customer who owns the order — never on the public shop endpoints."""
+
+    method: str
+    status: str
+    amount: Decimal
+    payer_reference: str | None = None
+    payee_name: str | None = None
+    upi_id: str | None = None
+    upi_qr_url: str | None = None
+    # Ready-made upi://pay deep link (only for method="upi").
+    upi_link: str | None = None
+    # What the shop currently accepts, so the page can offer a switch.
+    shop_accepts_upi: bool = False
+    shop_accepts_cash: bool = False
 
 
 class OrderItemOut(BaseModel):
@@ -87,6 +116,7 @@ class OrderDetailOut(OrderOut):
 
     shop: ShopOut | None = None
     items: list[OrderItemOut] = []
+    payment: PaymentInfo | None = None
 
 
 class OrderStatusUpdate(BaseModel):
@@ -106,26 +136,18 @@ class OrderStatusUpdate(BaseModel):
 
 class CheckoutResponse(BaseModel):
     orders: list[OrderOut]
-    # Handed to the frontend's Razorpay Checkout widget, along with
-    # razorpay_key_id, to open the payment popup for this specific order.
-    razorpay_order_id: str
-    razorpay_key_id: str
     total_amount: Decimal
 
 
-class VerifyPaymentRequest(BaseModel):
-    """
-    What Razorpay Checkout's own `handler` callback hands back to the
-    browser the instant a payment succeeds — see checkout/page.tsx.
-    `razorpay_signature` is HMAC-SHA256(order_id + "|" + payment_id,
-    our Razorpay key secret), so only Razorpay itself could have produced
-    it; routers/orders.py's verify_payment re-derives and checks it
-    server-side rather than trusting these three fields at face value.
-    """
+class MarkPaidRequest(BaseModel):
+    """Customer: "I've paid by UPI". The UTR is optional but helps the
+    shop find the transfer in their bank/UPI app."""
 
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
+    payer_reference: str | None = None
+
+
+class ChangePaymentMethodRequest(BaseModel):
+    method: str
 
 
 class DashboardOrderOut(OrderOut):
@@ -136,3 +158,5 @@ class DashboardOrderOut(OrderOut):
     buyer_email: str | None
     buyer_name: str | None = None
     item_count: int = 0
+    payer_reference: str | None = None
+    payment_marked_at: datetime | None = None

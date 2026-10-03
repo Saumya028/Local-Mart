@@ -111,7 +111,7 @@ function ProfilePageContent() {
           {tab === "payments" && (
             <ComingSoonTab
               title="No saved payment methods"
-              description="LocalMart doesn't store your card details — payments go straight through Razorpay at checkout, which is deliberately more secure than a marketplace keeping card numbers on file."
+              description="LocalMart doesn't store any payment details — you pay each shop directly by UPI or cash, and the money never passes through us."
             />
           )}
           {tab === "reviews" && (

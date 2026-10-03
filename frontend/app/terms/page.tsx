@@ -24,8 +24,11 @@ export default function TermsPage() {
         <h2 className="text-lg font-semibold text-gray-900">Orders &amp; payments</h2>
         <p>
           Prices and stock are re-verified by our servers at checkout, not trusted
-          from what your browser last displayed. Payment is processed by
-          Razorpay; we never see or store your full card details.
+          from what your browser last displayed. You pay each shop
+          directly, by UPI or in cash on delivery/pickup — payments never pass
+          through LocalMart, and we never see or store your card or bank details.
+          A shop confirms receipt of your payment itself, and any refund is
+          settled directly between you and the shop.
         </p>
       </section>
 

@@ -43,12 +43,6 @@ class Settings(BaseSettings):
     # `cors_origins` below for the parsed form main.py actually uses.
     frontend_origin: str = "http://localhost:3000"
 
-    # Razorpay test-mode keys (Razorpay Dashboard -> Settings -> API Keys)
-    razorpay_key_id: str = ""
-    razorpay_key_secret: str = ""
-    # From Razorpay Dashboard -> Settings -> Webhooks -> the webhook's "Secret"
-    razorpay_webhook_secret: str = ""
-
     # Phase 7 — observability & logging. Both optional: an empty
     # sentry_dsn means error tracking is simply off (see
     # core/observability.py), and log_level just controls verbosity.

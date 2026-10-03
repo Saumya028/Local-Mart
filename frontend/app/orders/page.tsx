@@ -8,7 +8,7 @@ type Order = { id: string; status: string; fulfillment_type: string; total_amoun
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Payment pending",
-  confirmed: "Confirmed",
+  confirmed: "Order placed",
   payment_failed: "Payment failed",
   preparing: "Preparing",
   packing: "Packing your order",
@@ -16,6 +16,7 @@ const STATUS_LABEL: Record<string, string> = {
   delivered: "Delivered",
   ready_for_pickup: "Ready for pickup",
   picked_up: "Picked up",
+  cancelled: "Cancelled",
 };
 
 export default function OrdersPage() {

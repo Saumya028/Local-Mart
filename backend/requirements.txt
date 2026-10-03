@@ -18,7 +18,6 @@ pydantic-settings==2.5.2
 python-dotenv==1.2.2
 alembic==1.13.2
 pyjwt[crypto]==2.13.0
-razorpay==2.0.1
 
 # Staff (manager/delivery) account creation calls Supabase's Admin REST
 # API directly (core/supabase_admin.py) — no official async Supabase

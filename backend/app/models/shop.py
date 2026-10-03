@@ -62,6 +62,15 @@ class Shop(Base):
     # checkout) — a shop with no address has nowhere for a customer to
     # go pick up from.
     pickup_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Direct payments (customer pays the shop, never the platform).
+    # upi_id is the shop's VPA (e.g. "shopname@okaxis"); upi_qr_url is an
+    # optional uploaded QR image (public-bucket URL). Neither is exposed
+    # on the public ShopOut — only shown to a customer who has actually
+    # placed an order with this shop (see schemas/order.py's PayeeInfo).
+    upi_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    upi_qr_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    accepts_upi: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    accepts_cash: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     # Admin can deactivate a shop (Phase 6) without deleting its data.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 

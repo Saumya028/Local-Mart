@@ -5,9 +5,13 @@ drift apart (which is exactly what happened when "shipped" got renamed
 to "preparing"/"ready" here but admin.py's platform_metrics still only
 checked for the literal string "confirmed").
 
-status flow: pending -> confirmed (payment succeeded, webhook-only)
-                      -> payment_failed (payment failed, webhook-only)
-             confirmed -> preparing -> packing -> ...
+status flow: confirmed -> preparing -> packing -> ...
+
+Payments are direct customer -> shop (UPI or cash), so an order starts
+at "confirmed" the moment it's placed — payment state lives separately
+on the Payment row (unpaid/submitted/paid, see app/models/payment.py).
+"pending" and "payment_failed" belong to the old Razorpay flow; existing
+rows may still carry them but nothing creates them anymore.
 
 From "packing" the pipeline forks on the order's OWN
 `fulfillment_type` ("delivery" or "pickup" — set once at checkout,
@@ -24,9 +28,10 @@ require_role on the endpoint) — there's no per-step role restriction,
 since a small shop with no staff hired yet still needs its owner alone
 to move an order through every step.
 
-There is deliberately no "cancelled"/"rejected" status anyone can set —
-see the two transition maps below. Once a payment has cleared, the shop
-accepts the order; there is no reject action anywhere in the product.
+"cancelled" is NOT part of either forward transition map below — it's a
+separate action (see CUSTOMER_CANCELABLE_FROM / SHOP_CANCELABLE_FROM)
+that releases reserved stock. Without a gateway guaranteeing payment, a
+customer can abandon an unpaid UPI order, so cancellation has to exist.
 """
 
 DELIVERY_TRANSITIONS: dict[str, set[str]] = {
@@ -60,6 +65,13 @@ def allowed_transitions_for(fulfillment_type: str) -> dict[str, set[str]]:
 # for what is, from the return-window's point of view
 # (core/return_status.py), the exact same event.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"delivered", "picked_up"})
+
+# Where cancellation is allowed from. A customer may cancel only before
+# the shop starts preparing AND while no payment has been marked/received
+# (checked in routers/orders.py); a shop may cancel any time before the
+# order leaves for delivery / is ready for pickup.
+CUSTOMER_CANCELABLE_FROM: frozenset[str] = frozenset({"confirmed"})
+SHOP_CANCELABLE_FROM: frozenset[str] = frozenset({"confirmed", "preparing", "packing"})
 
 # Every status a *paid* order can be in, across BOTH fulfillment types.
 # Used anywhere revenue/order counts are computed — "pending" (awaiting
