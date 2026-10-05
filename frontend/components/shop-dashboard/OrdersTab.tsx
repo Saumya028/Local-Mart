@@ -407,16 +407,30 @@ export function OrdersTab({ shopId }: { shopId: string }) {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={proofPreview} alt="Delivery proof preview" className="w-full h-48 object-cover rounded-lg" />
             ) : (
-              <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-gray-200 rounded-lg cursor-pointer text-sm text-gray-400 gap-1">
-                <span>Tap to take or choose a photo</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => pickProofFile(e.target.files?.[0] ?? null)}
-                />
-              </label>
+              <div className="h-48 border-2 border-dashed border-gray-200 rounded-lg flex flex-col items-center justify-center gap-3 p-3">
+                <div className="flex gap-2 w-full">
+                  <label className="flex-1 text-center bg-blue-600 text-white text-sm font-medium rounded-lg px-3 py-2.5 cursor-pointer">
+                    Take photo
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => { pickProofFile(e.target.files?.[0] ?? null); e.target.value = ""; }}
+                    />
+                  </label>
+                  <label className="flex-1 text-center border border-gray-300 text-gray-700 text-sm font-medium rounded-lg px-3 py-2.5 cursor-pointer">
+                    From gallery
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => { pickProofFile(e.target.files?.[0] ?? null); e.target.value = ""; }}
+                    />
+                  </label>
+                </div>
+                <span className="text-xs text-gray-400">Any photo size is fine — it&apos;s shrunk automatically</span>
+              </div>
             )}
 
             {proofPreview && (

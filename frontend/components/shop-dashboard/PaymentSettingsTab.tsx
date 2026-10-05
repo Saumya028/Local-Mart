@@ -116,7 +116,7 @@ export function PaymentSettingsTab({
           )}
           <input
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/*"
             disabled={uploading}
             onChange={(e) => onQrFile(e.target.files?.[0])}
             className="text-sm"

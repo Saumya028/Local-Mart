@@ -95,7 +95,7 @@ export function ImageUploader({
         <input
           key={inputKey}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/*"
           multiple
           onChange={(e) => handleFiles(e.target.files)}
           disabled={uploading}

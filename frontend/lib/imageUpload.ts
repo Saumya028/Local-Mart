@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { prepareImage } from "@/lib/prepareImage";
 
 // Public bucket, deliberately unlike shop-documents — product photos
 // need to be viewable by any customer browsing the storefront, not just
@@ -6,8 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 // setup" for the exact SQL to create it and its RLS policies.
 export const PRODUCT_IMAGES_BUCKET = "product-images";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB — generous for a product photo, small enough to keep pages fast
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 /**
  * Uploads one image to the product-images bucket under the current
@@ -18,14 +17,10 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
  * never expires and works for a logged-out customer too.
  */
 export async function uploadProductImage(userId: string, file: File): Promise<string> {
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    throw new Error(`"${file.name}" isn't a supported image type — use JPG, PNG, or WEBP.`);
-  }
-  if (file.size > MAX_FILE_BYTES) {
-    throw new Error(`"${file.name}" is too large — product photos must be under 5MB.`);
-  }
+  // Any image is accepted; it is resized/compressed to a small JPEG first.
+  file = await prepareImage(file);
 
-  const ext = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
+  const ext = "jpg";
   const path = `${userId}/${crypto.randomUUID()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage

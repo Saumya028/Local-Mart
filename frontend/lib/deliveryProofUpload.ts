@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { prepareImage } from "@/lib/prepareImage";
 
 // Public bucket, same reasoning as product-images (see imageUpload.ts):
 // a delivered order's proof photo is shown on the CUSTOMER's own order-
@@ -8,8 +9,6 @@ import { supabase } from "@/lib/supabaseClient";
 // the exact SQL to create this bucket and its RLS policies.
 export const DELIVERY_PROOFS_BUCKET = "delivery-proofs";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB — a phone photo, not a full-res scan
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 /**
  * Uploads one delivery-proof photo under the current (staff) user's own
@@ -19,14 +18,10 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
  * `delivery_proof_photo_url`.
  */
 export async function uploadDeliveryProof(userId: string, file: File): Promise<string> {
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    throw new Error(`"${file.name}" isn't a supported image type — use JPG, PNG, or WEBP.`);
-  }
-  if (file.size > MAX_FILE_BYTES) {
-    throw new Error(`"${file.name}" is too large — proof photos must be under 5MB.`);
-  }
+  // Any image is accepted; it is resized/compressed to a small JPEG first.
+  file = await prepareImage(file);
 
-  const ext = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
+  const ext = "jpg";
   const path = `${userId}/${crypto.randomUUID()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
