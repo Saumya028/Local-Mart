@@ -21,13 +21,13 @@ export function ReportsTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
-  if (error) return <div className="p-8"><p className="text-sm text-red-500">{error}</p></div>;
+  if (loading) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
+  if (error) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-red-500">{error}</p></div>;
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-6 lg:p-8">
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Monthly Shop Growth</h3>
           {growth.every((p) => Number(p.value) === 0) ? (
             <p className="text-sm text-gray-400">No shops created in this period yet.</p>
@@ -36,7 +36,7 @@ export function ReportsTab() {
           )}
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Revenue by Category</h3>
           {categories.length === 0 ? (
             <p className="text-sm text-gray-400">No confirmed orders yet.</p>

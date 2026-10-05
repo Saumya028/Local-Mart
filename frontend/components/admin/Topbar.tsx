@@ -1,9 +1,22 @@
 "use client";
 
-export function Topbar({ title, badgeCount }: { title: string; badgeCount?: number }) {
+import { MenuButton } from "@/components/dashboard/NavDrawer";
+
+export function Topbar({
+  title,
+  badgeCount,
+  onMenu,
+}: {
+  title: string;
+  badgeCount?: number;
+  onMenu: () => void;
+}) {
   return (
-    <header className="flex items-center justify-between px-8 py-5 border-b border-gray-100 bg-white gap-6">
-      <h1 className="text-xl font-bold text-gray-900 shrink-0">{title}</h1>
+    <header className="sticky top-0 z-20 flex items-center justify-between px-4 sm:px-8 py-3 sm:py-5 border-b border-gray-100 bg-white gap-3 sm:gap-6">
+      <div className="flex items-center gap-2 min-w-0">
+        <MenuButton onClick={onMenu} />
+        <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{title}</h1>
+      </div>
       <div className="flex items-center gap-4 flex-1 justify-end">
         <div className="relative w-full max-w-xs hidden sm:block">
           <svg

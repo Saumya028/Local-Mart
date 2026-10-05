@@ -113,8 +113,8 @@ export function DashboardTab({
     }
   }
 
-  if (loading) return <div className="p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
-  if (error) return <div className="p-8"><p className="text-sm text-red-500">{error}</p></div>;
+  if (loading) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
+  if (error) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-red-500">{error}</p></div>;
   if (!summary) return null;
 
   const totalRevenue = trend.reduce((sum, p) => sum + Number(p.value), 0);
@@ -154,7 +154,7 @@ export function DashboardTab({
   ];
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         {cards.map((c) => (
           <div key={c.key} className="bg-white rounded-2xl border border-gray-100 p-5">
@@ -169,7 +169,7 @@ export function DashboardTab({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        <div className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
           <div className="flex items-start justify-between mb-1">
             <div>
               <h3 className="font-semibold text-gray-900">Platform Revenue</h3>
@@ -186,7 +186,7 @@ export function DashboardTab({
           <LineChart points={trend} formatY={(n) => formatINR(n, { compact: true })} />
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Orders by Category</h3>
           {categories.length === 0 ? (
             <p className="text-sm text-gray-400">No confirmed orders yet.</p>
@@ -209,7 +209,7 @@ export function DashboardTab({
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 p-6">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
             Pending Shop Approvals
@@ -226,10 +226,10 @@ export function DashboardTab({
         ) : (
           <div className="divide-y divide-gray-50">
             {pending.map((shop) => (
-              <div key={shop.id} className="flex items-center justify-between py-3">
+              <div key={shop.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
-                    <svg viewBox="0 0 20 20" fill="none" className="w-4.5 h-4.5">
+                    <svg viewBox="0 0 20 20" fill="none" className="w-[18px] h-[18px]">
                       <path d="M3 7.5 4 3h12l1 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
                       <path d="M4 8.2V17h12V8.2" stroke="currentColor" strokeWidth="1.6" />
                     </svg>
@@ -242,7 +242,7 @@ export function DashboardTab({
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                   <span
                     className={`text-xs font-medium rounded-full px-2.5 py-1 ${docsStatusMeta(shop.docs_status).className}`}
                   >

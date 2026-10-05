@@ -31,7 +31,9 @@ export function LineChart({ points, formatY }: { points: MonthPoint[]; formatY: 
   });
 
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+    <div className="overflow-x-auto -mx-1 px-1">
+      <div className="min-w-[480px]">
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
       {gridLines.map((g, i) => (
         <g key={i}>
           <line x1={PAD_LEFT} x2={WIDTH - 10} y1={g.y} y2={g.y} stroke="#eef0f4" strokeWidth={1} />
@@ -51,6 +53,8 @@ export function LineChart({ points, formatY }: { points: MonthPoint[]; formatY: 
         </text>
       ))}
     </svg>
+      </div>
+    </div>
   );
 }
 
@@ -70,7 +74,9 @@ export function BarChart({ points }: { points: MonthPoint[] }) {
   });
 
   return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+    <div className="overflow-x-auto -mx-1 px-1">
+      <div className="min-w-[480px]">
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
       {gridLines.map((g, i) => (
         <g key={i}>
           <line x1={PAD_LEFT} x2={WIDTH - 10} y1={g.y} y2={g.y} stroke="#eef0f4" strokeWidth={1} />
@@ -94,6 +100,8 @@ export function BarChart({ points }: { points: MonthPoint[] }) {
         );
       })}
     </svg>
+      </div>
+    </div>
   );
 }
 
@@ -141,7 +149,7 @@ export function DonutChart({ shares, size = 200 }: { shares: CategoryShare[]; si
   });
 
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} className="max-w-full h-auto">
       {arcs.map((a, i) => (
         <path key={i} d={a.path} fill={a.color} />
       ))}

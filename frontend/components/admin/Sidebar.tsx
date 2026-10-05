@@ -1,5 +1,7 @@
 "use client";
 
+import { NavDrawer } from "@/components/dashboard/NavDrawer";
+
 export type AdminTabKey = "dashboard" | "shops" | "users" | "attributes" | "reports" | "settings";
 
 const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
@@ -82,14 +84,19 @@ export function Sidebar({
   onSelectTab,
   pendingShopsCount,
   adminEmail,
+  open,
+  onClose,
 }: {
   tab: AdminTabKey;
   onSelectTab: (t: AdminTabKey) => void;
   pendingShopsCount: number;
   adminEmail: string | null;
+  // Mobile drawer state (below `md` the sidebar is an off-canvas drawer).
+  open: boolean;
+  onClose: () => void;
 }) {
   return (
-    <aside className="w-60 shrink-0 border-r border-gray-100 bg-white flex flex-col h-full">
+    <NavDrawer open={open} onClose={onClose}>
       <div className="flex items-center gap-2 px-5 py-5">
         <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0">
           <svg viewBox="0 0 20 20" fill="none" className="w-4 h-4">
@@ -118,11 +125,14 @@ export function Sidebar({
         </div>
       </div>
 
-      <nav className="flex-1 px-3 space-y-1">
+      <nav className="flex-1 px-3 pb-4 space-y-1">
         {NAV.map((item) => (
           <button
             key={item.key}
-            onClick={() => onSelectTab(item.key)}
+            onClick={() => {
+              onSelectTab(item.key);
+              onClose();
+            }}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
               tab === item.key
                 ? "bg-blue-50 text-blue-700 font-medium"
@@ -139,6 +149,6 @@ export function Sidebar({
           </button>
         ))}
       </nav>
-    </aside>
+    </NavDrawer>
   );
 }

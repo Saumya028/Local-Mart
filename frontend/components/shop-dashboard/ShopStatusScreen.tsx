@@ -60,7 +60,7 @@ export function ShopStatusScreen({
   const docsBadge = DOCS_BADGE[shop.docs_status] ?? DOCS_BADGE.pending;
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-10 space-y-6">
+    <main className="max-w-2xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">{shop.name}</h1>
         <p className="text-sm text-gray-500">{shop.category}</p>

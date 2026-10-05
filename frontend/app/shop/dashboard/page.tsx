@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
@@ -44,6 +44,9 @@ export default function ShopDashboardPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
   const [togglingPickup, setTogglingPickup] = useState(false);
+  // Mobile nav drawer (the sidebar is off-canvas below the `md` breakpoint).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   // A manager/delivery account is staff — created BY a shop owner (see
   // the new Staff tab), never self-service, and scoped to exactly one
@@ -163,7 +166,7 @@ export default function ShopDashboardPage() {
     // Covers auth still resolving, AND the brief moment before the
     // effect above sends a guest on to /login — never a dead end.
     return (
-      <main className="max-w-4xl mx-auto px-6 py-10">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <p className="text-sm text-gray-400">Loading…</p>
       </main>
     );
@@ -180,7 +183,7 @@ export default function ShopDashboardPage() {
   // owner can create/assign them one (see the Staff tab).
   if (!canAccessDashboard) {
     return (
-      <main className="max-w-lg mx-auto px-6 py-10">
+      <main className="max-w-lg mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <ApplyForm userId={profile!.id} onCreated={handleShopApplied} loadError={error} />
       </main>
     );
@@ -189,7 +192,7 @@ export default function ShopDashboardPage() {
   if (shops.length === 0) {
     if (isStaff) {
       return (
-        <main className="max-w-lg mx-auto px-6 py-16 text-center">
+        <main className="max-w-lg mx-auto px-4 sm:px-6 py-10 sm:py-16 text-center">
           <h1 className="text-xl font-semibold text-gray-900">No shop assigned</h1>
           <p className="text-sm text-gray-500 mt-2">
             Your account isn&apos;t currently linked to a shop. Ask the shop owner who set up
@@ -199,7 +202,7 @@ export default function ShopDashboardPage() {
       );
     }
     return (
-      <main className="max-w-lg mx-auto px-6 py-10">
+      <main className="max-w-lg mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <ApplyForm userId={profile!.id} onCreated={handleShopApplied} loadError={error} />
       </main>
     );
@@ -225,8 +228,15 @@ export default function ShopDashboardPage() {
           pendingCount={0}
           pendingReturnsCount={0}
           role={profile?.role}
+          open={menuOpen}
+          onClose={closeMenu}
         />
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 flex flex-col min-w-0">
+          <Topbar
+            title="Application status"
+            name={profile?.full_name ?? profile?.email ?? null}
+            onMenu={() => setMenuOpen(true)}
+          />
           <ShopStatusScreen shop={selectedShop} userId={profile!.id} onUpdated={loadShops} />
         </div>
       </div>
@@ -250,10 +260,16 @@ export default function ShopDashboardPage() {
             : undefined
         }
         togglingPickup={togglingPickup}
+        open={menuOpen}
+        onClose={closeMenu}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Topbar title={TAB_TITLES[tab]} name={profile?.full_name ?? profile?.email ?? null} />
-        <div className="flex-1 overflow-y-auto">
+        <Topbar
+          title={TAB_TITLES[tab]}
+          name={profile?.full_name ?? profile?.email ?? null}
+          onMenu={() => setMenuOpen(true)}
+        />
+        <div className="flex-1 min-w-0">
           {selectedShopId && tab === "dashboard" && (
             <DashboardTab shopId={selectedShopId} onGoToOrders={() => setTab("orders")} />
           )}

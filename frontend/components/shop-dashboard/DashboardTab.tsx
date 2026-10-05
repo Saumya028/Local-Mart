@@ -34,15 +34,15 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
       .finally(() => setLoading(false));
   }, [shopId]);
 
-  if (loading) return <p className="text-sm text-gray-400 p-8">Loading dashboard…</p>;
-  if (error) return <p className="text-sm text-red-500 p-8">{error}</p>;
+  if (loading) return <p className="text-sm text-gray-400 p-4 sm:p-8">Loading dashboard…</p>;
+  if (error) return <p className="text-sm text-red-500 p-4 sm:p-8">{error}</p>;
   if (!metrics) return null;
 
   const orderChange = pctChange(metrics.today_orders, metrics.yesterday_orders);
   const revenueChange = pctChange(Number(metrics.today_revenue), Number(metrics.yesterday_revenue));
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
           label="Today's Revenue"
@@ -86,7 +86,7 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <div className="xl:col-span-2 bg-white border border-gray-100 rounded-2xl p-5">
+        <div className="xl:col-span-2 bg-white border border-gray-100 rounded-2xl p-4 sm:p-5">
           <div className="flex items-center justify-between mb-1">
             <div>
               <h2 className="font-semibold text-gray-900">Revenue This Week</h2>
@@ -104,7 +104,7 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
           <LineChart points={metrics.revenue_by_day} formatY={(n) => `₹${Math.round(n / 1000)}k`} />
         </div>
 
-        <div className="bg-white border border-gray-100 rounded-2xl p-5">
+        <div className="bg-white border border-gray-100 rounded-2xl p-4 sm:p-5">
           <h2 className="font-semibold text-gray-900 mb-3">Top Products</h2>
           {metrics.top_products.length === 0 ? (
             <p className="text-sm text-gray-400">No sales yet.</p>
@@ -129,7 +129,7 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
         </div>
       </div>
 
-      <div className="bg-white border border-gray-100 rounded-2xl p-5">
+      <div className="bg-white border border-gray-100 rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-gray-900">Recent Orders</h2>
           <button onClick={onGoToOrders} className="text-xs text-blue-600 font-medium">
@@ -140,7 +140,7 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
           <p className="text-sm text-gray-400">No orders yet.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
                   <th className="pb-2 font-medium">Order ID</th>
@@ -198,7 +198,7 @@ function MetricCard({
   return (
     <div
       onClick={onClick}
-      className={`bg-white border border-gray-100 rounded-2xl p-5 ${onClick ? "cursor-pointer hover:border-gray-200" : ""}`}
+      className={`bg-white border border-gray-100 rounded-2xl p-4 sm:p-5 ${onClick ? "cursor-pointer hover:border-gray-200" : ""}`}
     >
       <div className="flex items-start justify-between">
         <p className="text-sm text-gray-500">{label}</p>

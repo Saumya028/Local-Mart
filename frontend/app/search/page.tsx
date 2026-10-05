@@ -27,10 +27,12 @@ async function searchProducts(q?: string, category?: string): Promise<Product[]>
 }
 
 export default async function SearchPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { q?: string; category?: string };
+  // In Next.js 15+ searchParams is a Promise and must be awaited.
+  searchParams: Promise<{ q?: string; category?: string }>;
 }) {
+  const searchParams = await searchParamsPromise;
   const products = await searchProducts(searchParams.q, searchParams.category);
 
   const heading = searchParams.category

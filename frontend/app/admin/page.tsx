@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sidebar, AdminTabKey } from "@/components/admin/Sidebar";
 import { Topbar } from "@/components/admin/Topbar";
@@ -24,12 +24,15 @@ export default function AdminPanelPage() {
   const { profile, loading: authLoading, loggedIn } = useAuth();
   const [tab, setTab] = useState<AdminTabKey>("dashboard");
   const [pendingShopsCount, setPendingShopsCount] = useState(0);
+  // Mobile nav drawer (the sidebar is off-canvas below the `md` breakpoint).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   const isAdmin = profile?.role === "admin";
 
   if (authLoading) {
     return (
-      <main className="max-w-5xl mx-auto px-6 py-10">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
         <p className="text-sm text-gray-400">Loading…</p>
       </main>
     );
@@ -37,7 +40,7 @@ export default function AdminPanelPage() {
 
   if (!loggedIn) {
     return (
-      <main className="max-w-md mx-auto px-6 py-10 space-y-3">
+      <main className="max-w-md mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-3">
         <h1 className="text-2xl font-bold">Admin Panel</h1>
         <p className="text-sm text-gray-500">Log in to continue.</p>
       </main>
@@ -51,7 +54,7 @@ export default function AdminPanelPage() {
   // real security boundary.
   if (!isAdmin) {
     return (
-      <main className="max-w-md mx-auto px-6 py-10 space-y-3">
+      <main className="max-w-md mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-3">
         <h1 className="text-2xl font-bold">Admin Panel</h1>
         <p className="text-sm text-gray-500">
           This area is restricted to platform admins. If you believe your
@@ -68,10 +71,12 @@ export default function AdminPanelPage() {
         onSelectTab={setTab}
         pendingShopsCount={pendingShopsCount}
         adminEmail={profile?.email ?? null}
+        open={menuOpen}
+        onClose={closeMenu}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Topbar title={TAB_TITLES[tab]} badgeCount={pendingShopsCount} />
-        <div className="flex-1 overflow-y-auto">
+        <Topbar title={TAB_TITLES[tab]} badgeCount={pendingShopsCount} onMenu={() => setMenuOpen(true)} />
+        <div className="flex-1 min-w-0">
           {tab === "dashboard" && <DashboardTab onGoToShops={() => setTab("shops")} />}
           {tab === "shops" && <ShopsTab onPendingCountChange={setPendingShopsCount} />}
           {tab === "users" && <UsersTab selfId={profile?.id ?? null} />}

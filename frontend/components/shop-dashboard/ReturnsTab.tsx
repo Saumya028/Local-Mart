@@ -91,8 +91,8 @@ export function ReturnsTab({ shopId }: { shopId: string }) {
   }, [returns]);
 
   return (
-    <div className="p-8 space-y-4">
-      <div className="flex gap-1 bg-gray-50 border border-gray-100 rounded-lg p-1 text-sm overflow-x-auto w-fit">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-4">
+      <div className="flex gap-1 bg-gray-50 border border-gray-100 rounded-lg p-1 text-sm overflow-x-auto max-w-full w-fit">
         {FILTERS.map((f) => (
           <button
             key={f.key}

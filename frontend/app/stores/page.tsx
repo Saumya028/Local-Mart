@@ -37,10 +37,12 @@ async function searchShops(q?: string, category?: string, lat?: string, lng?: st
 }
 
 export default async function StoresPage({
-  searchParams,
+  searchParams: searchParamsPromise,
 }: {
-  searchParams: { q?: string; category?: string; lat?: string; lng?: string };
+  // In Next.js 15+ searchParams is a Promise and must be awaited.
+  searchParams: Promise<{ q?: string; category?: string; lat?: string; lng?: string }>;
 }) {
+  const searchParams = await searchParamsPromise;
   const shops = await searchShops(searchParams.q, searchParams.category, searchParams.lat, searchParams.lng);
   const nearMeActive = Boolean(searchParams.lat && searchParams.lng);
 

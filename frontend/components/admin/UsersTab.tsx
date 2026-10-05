@@ -80,8 +80,8 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
     }
   }
 
-  if (loading) return <div className="p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
-  if (error) return <div className="p-8"><p className="text-sm text-red-500">{error}</p></div>;
+  if (loading) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
+  if (error) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-red-500">{error}</p></div>;
 
   const cards = summary
     ? [
@@ -92,7 +92,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
     : [];
 
   return (
-    <div className="p-8 space-y-5">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         {cards.map((c) => (
           <div key={c.label} className="bg-white rounded-2xl border border-gray-100 p-5">
@@ -103,7 +103,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
               <th className="px-5 py-3 font-medium">User</th>

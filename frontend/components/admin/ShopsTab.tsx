@@ -77,11 +77,11 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
   }
 
   return (
-    <div className="p-8 space-y-5">
-      <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+      <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1 w-full sm:w-fit overflow-x-auto">
         <button
           onClick={() => setSubTab("pending")}
-          className={`flex items-center gap-2 text-sm font-medium rounded-lg px-4 py-2 transition-colors ${
+          className={`flex items-center justify-center gap-2 text-sm font-medium rounded-lg px-3 sm:px-4 py-2 transition-colors whitespace-nowrap flex-1 sm:flex-none ${
             subTab === "pending" ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
           }`}
         >
@@ -94,7 +94,7 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
         </button>
         <button
           onClick={() => setSubTab("all")}
-          className={`text-sm font-medium rounded-lg px-4 py-2 transition-colors ${
+          className={`text-sm font-medium rounded-lg px-3 sm:px-4 py-2 transition-colors whitespace-nowrap flex-1 sm:flex-none ${
             subTab === "all" ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
           }`}
         >
@@ -112,7 +112,7 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
         ) : (
           <div className="space-y-4">
             {pendingShops.map((shop) => (
-              <div key={shop.id} className="bg-white rounded-2xl border border-gray-100 p-5 flex items-center justify-between gap-4">
+              <div key={shop.id} className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="flex items-center gap-4 min-w-0">
                   <div className="w-11 h-11 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
                     <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
@@ -147,13 +147,13 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
                     )}
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-2 shrink-0">
+                <div className="flex flex-col lg:items-end gap-2 lg:shrink-0">
                   <span
                     className={`text-xs font-medium rounded-full px-2.5 py-1 whitespace-nowrap ${docsStatusMeta(shop.docs_status).className}`}
                   >
                     {docsStatusMeta(shop.docs_status).label}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => act(shop, "approve")}
                       disabled={actingId === shop.id}
@@ -184,8 +184,8 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
       ) : allShops.length === 0 ? (
         <p className="text-sm text-gray-400">No shops yet.</p>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
                 <th className="px-5 py-3 font-medium">Shop</th>

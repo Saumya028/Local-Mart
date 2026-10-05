@@ -1,6 +1,8 @@
 "use client";
 
-export function Topbar({ title, name }: { title: string; name: string | null }) {
+import { MenuButton } from "@/components/dashboard/NavDrawer";
+
+export function Topbar({ title, name, onMenu }: { title: string; name: string | null; onMenu: () => void }) {
   const initials = (name ?? "?")
     .split(" ")
     .map((p) => p[0])
@@ -10,9 +12,12 @@ export function Topbar({ title, name }: { title: string; name: string | null }) 
     .toUpperCase();
 
   return (
-    <header className="flex items-center justify-between px-8 py-5 border-b border-gray-100 bg-white">
-      <h1 className="text-xl font-bold text-gray-900">{title}</h1>
-      <div className="flex items-center gap-4">
+    <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 sm:px-8 py-3 sm:py-5 border-b border-gray-100 bg-white">
+      <div className="flex items-center gap-2 min-w-0">
+        <MenuButton onClick={onMenu} />
+        <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{title}</h1>
+      </div>
+      <div className="flex items-center gap-4 shrink-0">
         <button aria-label="Notifications" className="relative text-gray-400 hover:text-gray-600">
           <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
             <path

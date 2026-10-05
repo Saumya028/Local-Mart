@@ -59,7 +59,7 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
   }, [products, search]);
 
   return (
-    <div className="p-8 space-y-4">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-4">
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <input
           value={search}
@@ -99,8 +99,47 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
         ) : filtered.length === 0 ? (
           <p className="text-sm text-gray-400 p-6">No products yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <>
+          {/* Phones: one card per product, with stock + actions always visible. */}
+          <div className="md:hidden divide-y divide-gray-100">
+            {filtered.map((p) =>
+              editingId === p.id ? (
+                <div key={p.id} className="p-3">
+                  <ProductForm
+                    shopId={shopId}
+                    userId={userId}
+                    product={p}
+                    existingProducts={products}
+                    onSaved={() => {
+                      setEditingId(null);
+                      load();
+                    }}
+                    onCancel={() => setEditingId(null)}
+                  />
+                </div>
+              ) : (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  onEdit={() => {
+                    setShowForm(false);
+                    setEditingId(p.id);
+                  }}
+                  onToggleActive={() => toggleActive(p)}
+                  onStockChange={async (qty) => {
+                    await apiFetch(`/dashboard/products/${p.id}`, {
+                      method: "PUT",
+                      body: JSON.stringify({ stock_qty: qty }),
+                    });
+                    load();
+                  }}
+                />
+              )
+            )}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50/50">
                   <th className="px-5 py-3 font-medium">Product</th>
@@ -151,7 +190,72 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
               </tbody>
             </table>
           </div>
+          </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ProductCard({
+  product,
+  onEdit,
+  onToggleActive,
+  onStockChange,
+}: {
+  product: Product;
+  onEdit: () => void;
+  onToggleActive: () => void;
+  onStockChange: (qty: number) => void;
+}) {
+  const badge = stockBadge(product);
+  const variantLabel = Object.entries(product.variant_attributes || {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(", ");
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-start gap-3">
+        {product.images?.[0] ? (
+          // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
+          <img src={product.images[0]} alt="" className="w-12 h-12 rounded-md object-cover border border-gray-100 shrink-0" />
+        ) : (
+          <div className="w-12 h-12 rounded-md bg-gray-50 border border-gray-100 shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-gray-800">{product.name}</p>
+          {variantLabel && <p className="text-xs text-gray-400">{variantLabel}</p>}
+          <p className="text-xs text-gray-500 mt-0.5">{product.category}</p>
+        </div>
+        <p className="font-semibold text-gray-900 shrink-0">{formatINR(product.price)}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label className="flex items-center gap-2 text-xs text-gray-500">
+          Stock
+          <input
+            type="number"
+            min={0}
+            defaultValue={product.stock_qty}
+            onBlur={(e) => {
+              const v = Number(e.target.value);
+              if (v !== product.stock_qty) onStockChange(v);
+            }}
+            className="w-20 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-center text-gray-800"
+          />
+        </label>
+        <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${badge.className}`}>{badge.label}</span>
+        <div className="flex items-center gap-1 ml-auto">
+          <button onClick={onEdit} className="px-3 py-1.5 text-xs font-medium text-blue-600 rounded-md hover:bg-blue-50">
+            Edit
+          </button>
+          <button
+            onClick={onToggleActive}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md ${
+              product.is_active ? "text-red-500 hover:bg-red-50" : "text-emerald-600 hover:bg-emerald-50"
+            }`}
+          >
+            {product.is_active ? "Deactivate" : "Reactivate"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -326,7 +430,7 @@ function ProductForm({
 
   return (
     <form onSubmit={handleSubmit} className="border border-gray-100 bg-gray-50 rounded-xl p-4 space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input
           placeholder="Product name"
           value={name}
@@ -430,7 +534,7 @@ function ProductForm({
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           type="submit"
           disabled={saving}

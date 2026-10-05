@@ -43,8 +43,8 @@ export function InventoryTab({ shopId }: { shopId: string }) {
     }
   }
 
-  if (loading) return <p className="text-sm text-gray-400 p-8">Loading inventory…</p>;
-  if (error) return <p className="text-sm text-red-500 p-8">{error}</p>;
+  if (loading) return <p className="text-sm text-gray-400 p-4 sm:p-8">Loading inventory…</p>;
+  if (error) return <p className="text-sm text-red-500 p-4 sm:p-8">{error}</p>;
 
   const totalSkus = products.length;
   const lowStock = products.filter((p) => p.stock_qty > 0 && p.stock_qty <= LOW_STOCK_THRESHOLD);
@@ -52,14 +52,14 @@ export function InventoryTab({ shopId }: { shopId: string }) {
   const maxStock = Math.max(...products.map((p) => p.stock_qty), 1);
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="Total SKUs" value={String(totalSkus)} tone="blue" />
         <StatCard label="Low Stock Items" value={String(lowStock.length)} sub="Needs attention" tone="amber" />
         <StatCard label="Out of Stock" value={String(outOfStock.length)} sub="Update needed" tone="red" />
       </div>
 
-      <div className="bg-white border border-gray-100 rounded-2xl p-5">
+      <div className="bg-white border border-gray-100 rounded-2xl p-4 sm:p-5">
         <h2 className="font-semibold text-gray-900 mb-4">Stock Levels</h2>
         {products.length === 0 ? (
           <p className="text-sm text-gray-400">No active products yet.</p>
@@ -72,9 +72,9 @@ export function InventoryTab({ shopId }: { shopId: string }) {
                 const pct = Math.min(100, (p.stock_qty / maxStock) * 100);
                 const barColor = p.stock_qty === 0 ? "bg-gray-200" : p.stock_qty <= LOW_STOCK_THRESHOLD ? "bg-amber-400" : "bg-emerald-500";
                 return (
-                  <div key={p.id} className="flex items-center gap-4">
-                    <p className="w-48 shrink-0 text-sm font-medium text-gray-700 truncate">{p.name}</p>
-                    <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div key={p.id} className="flex flex-wrap sm:flex-nowrap items-center gap-x-4 gap-y-1.5">
+                    <p className="w-full sm:w-48 sm:shrink-0 text-sm font-medium text-gray-700 truncate">{p.name}</p>
+                    <div className="flex-1 min-w-[80px] h-2 rounded-full bg-gray-100 overflow-hidden">
                       <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
                     </div>
                     <span
@@ -116,7 +116,7 @@ function StatCard({
 }) {
   const iconBg = { blue: "bg-blue-50 text-blue-600", amber: "bg-amber-50 text-amber-600", red: "bg-red-50 text-red-600" }[tone];
   return (
-    <div className="bg-white border border-gray-100 rounded-2xl p-5">
+    <div className="bg-white border border-gray-100 rounded-2xl p-4 sm:p-5">
       <div className="flex items-start justify-between">
         <p className="text-sm text-gray-500">{label}</p>
         <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>

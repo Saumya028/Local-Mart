@@ -1,5 +1,6 @@
 "use client";
 
+import { NavDrawer } from "@/components/dashboard/NavDrawer";
 import { Shop } from "./types";
 
 export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "payments" | "staff";
@@ -143,6 +144,8 @@ export function Sidebar({
   role,
   onTogglePickup,
   togglingPickup = false,
+  open,
+  onClose,
 }: {
   shop: Shop | null;
   shops: Shop[];
@@ -159,11 +162,14 @@ export function Sidebar({
   // level, not just by convention.
   onTogglePickup?: (next: boolean) => void;
   togglingPickup?: boolean;
+  // Mobile drawer state (below `md` the sidebar is an off-canvas drawer).
+  open: boolean;
+  onClose: () => void;
 }) {
   const visible = new Set(tabsForRole(role));
   const items = NAV.filter((item) => visible.has(item.key));
   return (
-    <aside className="w-60 shrink-0 border-r border-gray-100 bg-white flex flex-col h-full">
+    <NavDrawer open={open} onClose={onClose}>
       <div className="flex items-center gap-2 px-5 py-5">
         <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0">
           <svg viewBox="0 0 20 20" fill="none" className="w-4 h-4">
@@ -207,18 +213,21 @@ export function Sidebar({
                 onChange={(e) => onTogglePickup(e.target.checked)}
                 className="sr-only peer"
               />
-              <span className="w-8 h-4.5 bg-gray-200 peer-checked:bg-blue-600 rounded-full transition-colors peer-disabled:opacity-50" />
+              <span className="w-8 h-[18px] bg-gray-200 peer-checked:bg-blue-600 rounded-full transition-colors peer-disabled:opacity-50" />
               <span className="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-3.5" />
             </span>
           </label>
         )}
       </div>
 
-      <nav className="flex-1 px-3 space-y-1">
+      <nav className="flex-1 px-3 pb-4 space-y-1">
         {items.map((item) => (
           <button
             key={item.key}
-            onClick={() => onSelectTab(item.key)}
+            onClick={() => {
+              onSelectTab(item.key);
+              onClose();
+            }}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
               tab === item.key
                 ? "bg-blue-50 text-blue-700 font-medium"
@@ -240,6 +249,6 @@ export function Sidebar({
           </button>
         ))}
       </nav>
-    </aside>
+    </NavDrawer>
   );
 }

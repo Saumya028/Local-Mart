@@ -78,22 +78,22 @@ export function SettingsTab() {
     }
   }
 
-  if (loading) return <div className="p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
-  if (error && !settings) return <div className="p-8"><p className="text-sm text-red-500">{error}</p></div>;
+  if (loading) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-gray-400">Loading…</p></div>;
+  if (error && !settings) return <div className="p-4 sm:p-6 lg:p-8"><p className="text-sm text-red-500">{error}</p></div>;
   if (!settings) return null;
 
   return (
-    <div className="p-8 max-w-3xl space-y-5">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-3xl space-y-5">
       {error && <p className="text-sm text-red-500">{error}</p>}
 
-      <div className="bg-white rounded-2xl border border-gray-100 p-6">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
         <h3 className="font-semibold text-gray-900 mb-1">Platform Settings</h3>
         <div className="divide-y divide-gray-50 mt-3">
           {FIELDS.map((f) => {
             const rawValue = settings[f.key];
             const isEditing = editingField === f.key;
             return (
-              <div key={f.key} className="flex items-center justify-between py-4">
+              <div key={f.key} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 py-4">
                 <div>
                   <p className="text-sm font-medium text-gray-900">{f.label}</p>
                   <p className="text-xs text-gray-400">{f.help}</p>
@@ -142,11 +142,11 @@ export function SettingsTab() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 p-6">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
         <h3 className="font-semibold text-gray-900 mb-1">Payment Gateway</h3>
         <div className="divide-y divide-gray-50 mt-3">
           {settings.payment_gateways.map((g) => (
-            <div key={g.key} className="flex items-center justify-between py-4">
+            <div key={g.key} className="flex items-center justify-between gap-3 py-4">
               <p className="text-sm font-medium text-gray-900">{g.name}</p>
               <div className="flex items-center gap-3">
                 <span
@@ -161,13 +161,13 @@ export function SettingsTab() {
                   aria-checked={g.enabled}
                   onClick={() => toggleGateway(g.key)}
                   disabled={saving}
-                  className={`relative w-10 h-5.5 rounded-full transition-colors disabled:opacity-50 ${
+                  className={`relative shrink-0 w-10 h-[22px] rounded-full transition-colors disabled:opacity-50 ${
                     g.enabled ? "bg-blue-600" : "bg-gray-200"
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${
-                      g.enabled ? "translate-x-[1.15rem]" : "translate-x-0.5"
+                    className={`absolute left-0 top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${
+                      g.enabled ? "translate-x-[20px]" : "translate-x-[2px]"
                     }`}
                   />
                 </button>
