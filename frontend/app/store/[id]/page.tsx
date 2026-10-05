@@ -31,8 +31,9 @@ async function getShopProducts(id: string): Promise<Product[]> {
   }
 }
 
-export default async function StorePage({ params }: { params: { id: string } }) {
-  const shop = await getShop(params.id);
+export default async function StorePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const shop = await getShop(id);
   if (!shop) {
     // GET /shops/{id} 404s for a pending/rejected/deactivated shop too,
     // not only a genuinely nonexistent one — from a visitor's point of
