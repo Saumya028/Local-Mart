@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import AddressForm from "@/components/AddressForm";
+import { addressLines } from "@/lib/customerFields";
 import { Address } from "./types";
 
 export function AddressesTab() {
@@ -80,14 +81,16 @@ export function AddressesTab() {
       ) : (
         <div className="space-y-2.5">
           {addresses.map((a) => (
-            <div key={a.id} className="border border-gray-100 rounded-xl p-4 flex items-center justify-between">
+            <div key={a.id} className="border border-gray-100 rounded-xl p-4 flex items-start justify-between gap-3">
               <div>
                 <p className="font-medium text-sm text-gray-900">
                   {a.label} {a.is_default && <span className="text-xs text-emerald-600 font-normal">(default)</span>}
                 </p>
-                <p className="text-xs text-gray-500">
-                  {a.line1}, {a.city}
-                </p>
+                {addressLines(a).map((line, i) => (
+                  <p key={i} className="text-xs text-gray-500">
+                    {line}
+                  </p>
+                ))}
               </div>
               <div className="flex gap-3 text-xs shrink-0">
                 {!a.is_default && (

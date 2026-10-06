@@ -155,8 +155,15 @@ export type WishlistEntry = {
 export type Address = {
   id: string;
   label: string;
+  // Newer fields are null on addresses saved before they existed.
+  recipient_name?: string | null;
+  phone?: string | null;
   line1: string;
+  line2?: string | null;
+  landmark?: string | null;
   city: string;
+  state?: string | null;
+  pincode?: string | null;
   is_default: boolean;
 };
 
@@ -167,6 +174,13 @@ export type AccountProfile = {
   phone: string | null;
   role: string;
   created_at: string;
+  date_of_birth?: string | null;
+  gender?: string | null;
+  customer_type?: "individual" | "business";
+  business_name?: string | null;
+  gstin?: string | null;
+  pan?: string | null;
+  gst_verified?: boolean;
 };
 
 const STATUS_META: Record<string, { label: string; className: string }> = {

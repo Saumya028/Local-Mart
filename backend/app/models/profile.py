@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -69,3 +69,26 @@ class Profile(Base):
     shop_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # ---- Customer details (collected at signup / My Account) ----------
+    # All nullable: accounts created before these existed, and phone-only
+    # logins, simply don't have them until the customer fills them in.
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # "male" | "female" | "other" | "prefer_not_to_say" — see
+    # core/customer_validation.py's GENDERS.
+    gender: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # "individual" (normal customer) or "business" (enterprise buying with
+    # a GSTIN, e.g. to claim input tax credit). Every account starts as
+    # "individual" unless the signup form says otherwise.
+    customer_type: Mapped[str] = mapped_column(
+        String, default="individual", server_default="individual", index=True
+    )
+    business_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True, index=True)
+    pan: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # A GSTIN the customer typed in is only *well-formed* (checksum
+    # validated), not proven to be theirs. This flips to True only through
+    # an admin/verification step — never from user input — and any
+    # business-only pricing/tax treatment should key off THIS, not `gstin`.
+    gst_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

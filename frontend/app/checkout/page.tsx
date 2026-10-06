@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import AddressForm from "@/components/AddressForm";
+import { addressLines } from "@/lib/customerFields";
 
 // crypto.randomUUID() isn't guaranteed to exist in every server runtime
 // this component might briefly render under during SSR, so we fall back
@@ -14,7 +15,19 @@ function generateIdempotencyKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-type Address = { id: string; label: string; line1: string; city: string; is_default: boolean };
+type Address = {
+  id: string;
+  label: string;
+  recipient_name?: string | null;
+  phone?: string | null;
+  line1: string;
+  line2?: string | null;
+  landmark?: string | null;
+  city: string;
+  state?: string | null;
+  pincode?: string | null;
+  is_default: boolean;
+};
 
 type CartShop = {
   id: string;
@@ -340,7 +353,7 @@ export default function CheckoutPage() {
                     className="mt-0.5"
                   />
                   <span>
-                    <span className="font-medium">{a.label}</span> — {a.line1}, {a.city}
+                    <span className="font-medium">{a.label}</span> — {addressLines(a).join(" · ")}
                   </span>
                 </label>
               ))}

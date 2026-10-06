@@ -1,7 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { KeyboardEvent, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
+import { AddressValues, EMPTY_ADDRESS, validateAddress } from "@/lib/customerFields";
+import { AddressFields } from "@/components/customer/FormParts";
 
 export default function AddressForm({
   onSaved,
@@ -10,21 +12,28 @@ export default function AddressForm({
   onSaved: () => void;
   onCancel?: () => void;
 }) {
-  const [label, setLabel] = useState("Home");
-  const [line1, setLine1] = useState("");
-  const [city, setCity] = useState("");
+  const [address, setAddress] = useState<AddressValues>(EMPTY_ADDRESS);
   const [isDefault, setIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function handleSubmit() {
+    const problem = validateAddress(address);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await apiFetch("/addresses", {
         method: "POST",
-        body: JSON.stringify({ label, line1, city, is_default: isDefault }),
+        body: JSON.stringify({
+          ...address,
+          line2: address.line2.trim() || null,
+          landmark: address.landmark.trim() || null,
+          is_default: isDefault,
+        }),
       });
       onSaved();
     } catch (err) {
@@ -34,31 +43,23 @@ export default function AddressForm({
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3 border rounded-lg p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <input
-          placeholder="Label (e.g. Home)"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          required
-          className="border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <input
-          placeholder="City"
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          required
-          className="border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
+  // Deliberately a <div>, not a <form>: this component is rendered inside
+  // the checkout page's own <form>, and HTML forbids nested forms (it
+  // causes a hydration error). So Enter is handled by hand — it saves the
+  // address instead of submitting the surrounding checkout form.
+  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
+      e.preventDefault();
+      if (!saving) handleSubmit();
+    }
+  }
 
-      <input
-        placeholder="Address line"
-        value={line1}
-        onChange={(e) => setLine1(e.target.value)}
-        required
-        className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+  return (
+    <div onKeyDown={handleKeyDown} className="space-y-3 border rounded-lg p-4">
+      <AddressFields
+        required={false}
+        value={address}
+        onChange={(patch) => setAddress((a) => ({ ...a, ...patch }))}
       />
 
       <label className="flex items-center gap-2 text-sm text-gray-600">
@@ -70,7 +71,8 @@ export default function AddressForm({
 
       <div className="flex gap-3">
         <button
-          type="submit"
+          type="button"
+          onClick={handleSubmit}
           disabled={saving}
           className="bg-blue-600 text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
@@ -82,6 +84,6 @@ export default function AddressForm({
           </button>
         )}
       </div>
-    </form>
+    </div>
   );
 }

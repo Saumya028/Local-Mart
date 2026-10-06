@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.core import customer_validation as cv
 from app.core.db import get_db
 from app.core.rate_limit import rate_limit_by_ip
 from app.core.security import get_current_user
@@ -42,9 +43,42 @@ async def update_me(
     current_user: Profile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """My Account > Settings — edits full_name/phone only (see ProfileUpdate's docstring for what's deliberately excluded and why)."""
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    """
+    My Account > Settings — edits the customer's own details (name, phone,
+    DOB, gender, account type and business/GST details). See ProfileUpdate's
+    docstring for what's deliberately excluded and why.
+    """
+    updates = payload.model_dump(exclude_unset=True)
+
+    # full_name can be cleared by an explicit null elsewhere in the app,
+    # but customer_type is NOT NULL — ignore an explicit null for it.
+    if updates.get("customer_type") is None:
+        updates.pop("customer_type", None)
+
+    old_gstin = current_user.gstin
+    for key, value in updates.items():
         setattr(current_user, key, value)
+
+    if current_user.customer_type == "business":
+        if not current_user.business_name:
+            raise HTTPException(status_code=422, detail="Business name is required for a business account")
+        if not current_user.gstin:
+            raise HTTPException(status_code=422, detail="GSTIN is required for a business account")
+        # A GSTIN embeds the holder's PAN (characters 3-12) — if both were
+        # given they have to agree, which catches most typos for free.
+        if current_user.pan and current_user.pan != cv.pan_from_gstin(current_user.gstin):
+            raise HTTPException(status_code=422, detail="PAN doesn't match the PAN inside the GSTIN")
+        # A different GSTIN is a different (unverified) claim.
+        if current_user.gstin != old_gstin:
+            current_user.gst_verified = False
+    else:
+        # Back to a normal customer: the business details no longer apply,
+        # and GST treatment must not linger on the account.
+        current_user.business_name = None
+        current_user.gstin = None
+        current_user.pan = None
+        current_user.gst_verified = False
+
     await db.commit()
     await db.refresh(current_user)
     return current_user

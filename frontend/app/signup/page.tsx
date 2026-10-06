@@ -7,11 +7,34 @@ import { supabase } from "@/lib/supabaseClient";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { useGuestOnly } from "@/lib/useGuestOnly";
 import { consumePostLoginRedirect } from "@/lib/postLoginRedirect";
+import {
+  AddressValues,
+  CustomerType,
+  EMPTY_ADDRESS,
+  panFromGstin,
+  validateAddress,
+  validateDob,
+  validateGstin,
+  validatePan,
+  validatePhone,
+} from "@/lib/customerFields";
+import {
+  AccountTypeToggle,
+  AddressFields,
+  BusinessFields,
+  Field,
+  PersonalFields,
+  SectionTitle,
+  inputCls,
+} from "@/components/customer/FormParts";
 
 export default function SignupPage() {
   const router = useRouter();
   const { checking } = useGuestOnly();
-  const [fullName, setFullName] = useState("");
+  const [customerType, setCustomerType] = useState<CustomerType>("individual");
+  const [personal, setPersonal] = useState({ full_name: "", phone: "", date_of_birth: "", gender: "" });
+  const [business, setBusiness] = useState({ business_name: "", gstin: "", pan: "" });
+  const [address, setAddress] = useState<AddressValues>(EMPTY_ADDRESS);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -29,15 +52,58 @@ export default function SignupPage() {
       return;
     }
 
+    // Instant feedback only — the backend re-validates everything when it
+    // creates the profile, so this can never be the only line of defence.
+    const problem =
+      validatePhone(personal.phone) ??
+      validateDob(personal.date_of_birth) ??
+      (customerType === "business"
+        ? validateGstin(business.gstin) ??
+          (business.pan ? validatePan(business.pan) : null) ??
+          (business.pan && business.pan !== panFromGstin(business.gstin)
+            ? "PAN doesn't match the PAN inside the GSTIN"
+            : null)
+        : null) ??
+      validateAddress(address, false);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+
     setLoading(true);
-    // `full_name` here lands in the JWT's `user_metadata` claim — the
-    // backend reads it back out on first login to fill in the profile
-    // row (see backend/app/core/security.py's get_current_user), so it
-    // doesn't need its own separate "set your name" step afterward.
+    // Everything under `data` lands in the JWT's `user_metadata` claim —
+    // the backend reads it back out on first login to fill in the profile
+    // row and the first saved address (see backend/app/core/security.py's
+    // get_current_user), so none of it needs a separate step afterward.
+    // This works the same whether or not email confirmation is on.
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: {
+          full_name: personal.full_name.trim(),
+          phone: personal.phone.trim(),
+          date_of_birth: personal.date_of_birth,
+          gender: personal.gender,
+          customer_type: customerType,
+          ...(customerType === "business"
+            ? {
+                business_name: business.business_name.trim(),
+                gstin: business.gstin.trim(),
+                pan: business.pan.trim() || undefined,
+              }
+            : {}),
+          address: {
+            label: address.label,
+            line1: address.line1.trim(),
+            line2: address.line2.trim() || undefined,
+            landmark: address.landmark.trim() || undefined,
+            city: address.city.trim(),
+            state: address.state,
+            pincode: address.pincode.trim(),
+          },
+        },
+      },
     });
     setLoading(false);
 
@@ -88,27 +154,37 @@ export default function SignupPage() {
   return (
     <AuthLayout title="Create your account" subtitle="Join LocalMart in seconds">
       <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-700 mb-1 block">Full name</label>
-          <input
-            required
-            placeholder="Your name"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <div>
-          <label className="text-sm text-gray-700 mb-1 block">Email address</label>
+        <SectionTitle>Account type</SectionTitle>
+        <AccountTypeToggle value={customerType} onChange={setCustomerType} />
+
+        <SectionTitle>Personal details</SectionTitle>
+        <PersonalFields value={personal} onChange={(patch) => setPersonal((p) => ({ ...p, ...patch }))} />
+
+        {customerType === "business" && (
+          <>
+            <SectionTitle>Business details</SectionTitle>
+            <BusinessFields value={business} onChange={(patch) => setBusiness((b) => ({ ...b, ...patch }))} />
+          </>
+        )}
+
+        <SectionTitle>Delivery address</SectionTitle>
+        <AddressFields
+          value={address}
+          onChange={(patch) => setAddress((a) => ({ ...a, ...patch }))}
+          showRecipient={false}
+        />
+
+        <SectionTitle>Login details</SectionTitle>
+        <Field label="Email address">
           <input
             type="email"
             required
             placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={inputCls}
           />
-        </div>
+        </Field>
         <div>
           <label className="text-sm text-gray-700 mb-1 block">Password</label>
           <div className="relative">
@@ -130,21 +206,23 @@ export default function SignupPage() {
             </button>
           </div>
         </div>
-        <div>
-          <label className="text-sm text-gray-700 mb-1 block">Confirm password</label>
+        <Field label="Confirm password">
           <input
             type={showPassword ? "text" : "password"}
             required
             placeholder="Re-enter your password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={inputCls}
           />
-        </div>
+        </Field>
 
         <p className="text-xs text-gray-400">
-          Every account starts as a customer. You can apply to list your own shop any time — approval of that
-          shop listing is what a platform admin reviews.
+          {customerType === "business"
+            ? "Business accounts shop as a normal customer until your GSTIN is verified; GST benefits apply after that. "
+            : ""}
+          You can apply to list your own shop any time — approval of that shop listing is what a platform admin
+          reviews.
         </p>
 
         {error && <p className="text-sm text-red-500">{error}</p>}

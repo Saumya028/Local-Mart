@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import jwt
@@ -9,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.models import Profile
+from app.core import customer_validation as cv
+from app.models import Address, Profile
+
+logger = logging.getLogger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -83,6 +87,62 @@ def decode_supabase_token(token: str) -> dict:
         )
 
 
+def profile_details_from_metadata(metadata: dict) -> dict:
+    """
+    Pull the extra signup fields (DOB, gender, phone, business/GST details)
+    out of the JWT's `user_metadata`.
+
+    user_metadata is chosen by the client at signUp(), so it's treated as
+    untrusted input: each field goes through the same validator the API
+    uses, and a bad value is just dropped (never raised) so a typo can't
+    lock someone out of logging in — they can fix it under My Account.
+    `gst_verified` is never read from here for the same reason.
+    """
+    details: dict = {}
+    for key, fn in (
+        ("phone", cv.validate_phone),
+        ("date_of_birth", cv.validate_dob),
+        ("gender", cv.validate_gender),
+    ):
+        value = cv.safe(fn, metadata.get(key))
+        if value is not None:
+            details[key] = value
+
+    if cv.safe(cv.validate_customer_type, metadata.get("customer_type")) == "business":
+        business_name = cv.safe(lambda v: cv.clean_text(v, field="Business name", max_len=150), metadata.get("business_name"))
+        gstin = cv.safe(cv.validate_gstin, metadata.get("gstin"))
+        pan = cv.safe(cv.validate_pan, metadata.get("pan"))
+        # Only become a business account if the details that make it one
+        # are actually valid; otherwise stay a normal customer.
+        if business_name and gstin and (pan is None or pan == cv.pan_from_gstin(gstin)):
+            details.update(customer_type="business", business_name=business_name, gstin=gstin, pan=pan)
+    return details
+
+
+def first_address_from_metadata(metadata: dict, fallback_name: str | None) -> dict | None:
+    """The delivery address typed on the signup form, if complete and valid."""
+    raw = metadata.get("address")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        from app.schemas.address import AddressCreate
+
+        data = AddressCreate(
+            label=raw.get("label") or "Home",
+            recipient_name=raw.get("recipient_name") or fallback_name,
+            phone=raw.get("phone") or metadata.get("phone"),
+            line1=raw.get("line1"),
+            line2=raw.get("line2"),
+            landmark=raw.get("landmark"),
+            city=raw.get("city"),
+            state=raw.get("state"),
+            pincode=raw.get("pincode"),
+        )
+    except Exception:
+        return None
+    return data.model_dump(exclude={"is_default", "lat", "lng"})
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
@@ -123,9 +183,35 @@ async def get_current_user(
         # users, and echoes back whatever was passed as `options.data` at
         # signUp() under `user_metadata`.
         phone = payload.get("phone") or None
-        full_name = (payload.get("user_metadata") or {}).get("full_name")
-        profile = Profile(id=user_id, email=email, phone=phone, full_name=full_name, role="customer")
+        metadata = payload.get("user_metadata") or {}
+        full_name = metadata.get("full_name")
+        details = profile_details_from_metadata(metadata)
+        # An email signup has no JWT `phone` claim; its mobile number
+        # rides in user_metadata instead.
+        profile = Profile(
+            id=user_id,
+            email=email,
+            phone=phone or details.pop("phone", None),
+            full_name=full_name,
+            role="customer",
+            **{k: v for k, v in details.items() if k != "phone"},
+        )
         db.add(profile)
+        # Flush (INSERT the profile row) BEFORE adding the address: the
+        # models declare the addresses.user_id foreign key but no ORM
+        # relationship(), so SQLAlchemy doesn't know to order the two
+        # INSERTs and may send the address first -> a foreign-key
+        # violation that would 500 every request for this new user.
+        await db.flush()
+        first_address = first_address_from_metadata(metadata, fallback_name=full_name)
+        if first_address is not None:
+            # A SAVEPOINT, so a problem with this optional extra can
+            # never roll back the profile itself or block the login.
+            try:
+                async with db.begin_nested():
+                    db.add(Address(id=uuid.uuid4(), user_id=user_id, is_default=True, **first_address))
+            except Exception:
+                logger.warning("Could not save signup address for user %s", user_id, exc_info=True)
         await db.commit()
         await db.refresh(profile)
 

@@ -182,7 +182,7 @@ async def checkout(
             address = address_result.scalar_one_or_none()
             if address is None or address.user_id != user.id:
                 raise HTTPException(status_code=404, detail="Address not found")
-            delivery_address_snapshot = f"{address.label}: {address.line1}, {address.city}"
+            delivery_address_snapshot = address.snapshot()
 
         created_orders: list[Order] = []
         grand_total = Decimal("0")

@@ -61,6 +61,11 @@ async def update_address(
         raise HTTPException(status_code=404, detail="Address not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    # These columns are NOT NULL — an explicit null would be a 500, so
+    # treat it as "leave unchanged".
+    for required in ("label", "line1", "city"):
+        if updates.get(required) is None:
+            updates.pop(required, None)
 
     if updates.get("is_default"):
         await db.execute(update(Address).where(Address.user_id == user.id).values(is_default=False))
