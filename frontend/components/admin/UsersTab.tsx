@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
-import { AdminUser, UsersSummary } from "./types";
+import { AdminUser, UsersSummary, matchesSearch } from "./types";
 
 const ROLES = ["customer", "shop_owner", "manager", "delivery_partner", "admin"] as const;
 
@@ -22,7 +22,7 @@ const ROLE_BADGE: Record<string, string> = {
   admin: "bg-amber-50 text-amber-600",
 };
 
-export function UsersTab({ selfId }: { selfId: string | null }) {
+export function UsersTab({ selfId, search = "" }: { selfId: string | null; search?: string }) {
   const [summary, setSummary] = useState<UsersSummary | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +116,7 @@ export function UsersTab({ selfId }: { selfId: string | null }) {
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => {
+            {users.filter((u) => matchesSearch(search, u.full_name, u.email, u.role)).map((u) => {
               const isSelf = u.id === selfId;
               const initials = (u.full_name ?? u.email ?? "?")
                 .split(" ")

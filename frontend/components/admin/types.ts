@@ -1,3 +1,11 @@
+// Case-insensitive "does any of these values contain the search text" —
+// the admin top bar's search box filters the current tab's list with it.
+export function matchesSearch(query: string, ...values: (string | null | undefined)[]): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return values.some((v) => (v ?? "").toLowerCase().includes(q));
+}
+
 export type AdminUser = {
   id: string;
   email: string | null;
@@ -23,6 +31,30 @@ export type AdminShop = {
   owner_email: string | null;
   owner_name: string | null;
   location: string | null;
+  sponsored_until: string | null;
+  is_sponsored: boolean;
+};
+
+export type SponsorshipPlan = { key: string; name: string; days: number; price: string; is_active: boolean };
+
+export type AdminSponsorshipPurchase = {
+  id: string;
+  shop_id: string;
+  shop_name: string;
+  owner_email: string | null;
+  plan_name: string;
+  days: number;
+  amount: string;
+  paid_at: string | null;
+  ends_at: string | null;
+};
+
+export type AdminSponsorships = {
+  active_shops: number;
+  total_shops: number;
+  paid_purchases: number;
+  revenue: string;
+  purchases: AdminSponsorshipPurchase[];
 };
 
 export type DashboardSummary = {

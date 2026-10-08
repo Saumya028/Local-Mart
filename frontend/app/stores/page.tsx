@@ -107,7 +107,9 @@ export default async function StoresPage({
                 {categoryIcon(shop.category)}
               </div>
               <div className="p-4">
-                <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
+                </div>
                 <p className="font-semibold text-gray-900 text-sm mt-0.5">{shop.name}</p>
                 <div className="flex items-center justify-between mt-1.5">
                   <p className="text-xs text-amber-500">★ {shop.rating.toFixed(1)}</p>

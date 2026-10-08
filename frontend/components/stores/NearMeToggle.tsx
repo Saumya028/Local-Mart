@@ -11,7 +11,18 @@ import { useRouter, useSearchParams } from "next/navigation";
  * searchParams it finds, so this component's only job is getting
  * lat/lng into the URL (and back out again on "Clear").
  */
-export function NearMeToggle({ active, radiusKm }: { active: boolean; radiusKm: number | null }) {
+export function NearMeToggle({
+  active,
+  radiusKm,
+  basePath = "/stores",
+  label = "shops",
+}: {
+  active: boolean;
+  radiusKm: number | null;
+  // Which page to push the lat/lng back onto — /stores (default) or /search.
+  basePath?: string;
+  label?: string;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [locating, setLocating] = useState(false);
@@ -20,7 +31,7 @@ export function NearMeToggle({ active, radiusKm }: { active: boolean; radiusKm: 
   function pushWithParams(mutate: (params: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
     mutate(params);
-    router.push(`/stores?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   function handleNearMe() {
@@ -42,7 +53,7 @@ export function NearMeToggle({ active, radiusKm }: { active: boolean; radiusKm: 
         setLocating(false);
         setError(
           err.code === err.PERMISSION_DENIED
-            ? "Location access was denied — allow it in your browser settings to see shops near you."
+            ? "Location access was denied — allow it in your browser settings to see results near you."
             : "Couldn't get your location. Try again in a moment."
         );
       },
@@ -61,7 +72,7 @@ export function NearMeToggle({ active, radiusKm }: { active: boolean; radiusKm: 
     return (
       <div className="flex items-center gap-2 text-sm">
         <span className="text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1.5">
-          Showing shops within {radiusKm ?? 5} km of you
+          Showing {label} within {radiusKm ?? 5} km of you
         </span>
         <button onClick={handleClear} className="text-blue-600 hover:underline text-xs font-medium">
           Clear
@@ -77,7 +88,7 @@ export function NearMeToggle({ active, radiusKm }: { active: boolean; radiusKm: 
         disabled={locating}
         className="text-sm font-medium text-blue-600 border border-blue-200 rounded-full px-3 py-1.5 hover:bg-blue-50 disabled:opacity-50"
       >
-        {locating ? "Locating…" : "📍 Show shops near me"}
+        {locating ? "Locating…" : `📍 Show ${label} near me`}
       </button>
       {error && <span className="text-xs text-red-500">{error}</span>}
     </div>

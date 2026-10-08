@@ -26,6 +26,9 @@ export type Shop = {
   upi_qr_url: string | null;
   accepts_upi: boolean;
   accepts_cash: boolean;
+  // Paid promotion — see SponsorshipTab.
+  is_sponsored?: boolean;
+  sponsored_until?: string | null;
 };
 
 export type Product = {

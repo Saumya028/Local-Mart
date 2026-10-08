@@ -48,7 +48,9 @@ export function FeaturedStores({ shops }: { shops: StoreData[] }) {
                   )}
                 </div>
                 <div className="p-4">
-                  <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
+                  </div>
                   <p className="font-semibold text-gray-900 text-sm mt-0.5">{shop.name}</p>
                   <p className="text-xs text-amber-500 mt-1.5">★ {shop.rating.toFixed(1)}</p>
                 </div>

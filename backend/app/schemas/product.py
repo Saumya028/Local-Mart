@@ -30,6 +30,16 @@ class ProductOut(BaseModel):
     created_at: datetime
 
 
+class ProductSearchOut(ProductOut):
+    """Search-result row: a product plus its shop's name (and distance
+    when the search included a location). Sponsorship only affects the
+    ORDER of rows; it is deliberately not exposed in the response."""
+
+    shop_name: str | None = None
+    # Only set when the search included lat/lng.
+    distance_km: float | None = None
+
+
 class VariantSummary(BaseModel):
     """One sibling in the product's variant_group_id family, as shown on
     the swatch/variant picker on the Product Detail page — deliberately

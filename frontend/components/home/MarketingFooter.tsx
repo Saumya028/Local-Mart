@@ -15,7 +15,7 @@ const COLUMNS: { title: string; links: { label: string; href: string; external?:
     links: [
       { label: "For Businesses", href: "/shop/dashboard" },
       { label: "Pricing", href: "/pricing" },
-      { label: "API", href: API_DOCS_URL, external: true },
+      // { label: "API", href: API_DOCS_URL, external: true },
       { label: "Status", href: "/status" },
     ],
   },

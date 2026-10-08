@@ -74,6 +74,10 @@ class AdminShopOut(BaseModel):
     owner_email: str | None
     owner_name: str | None = None
     location: str | None = None
+    sponsored_until: datetime | None = None
+    # True only while sponsored_until is in the future; False + a past
+    # date means "was sponsored, lapsed"; both empty = never bought.
+    is_sponsored: bool = False
 
 
 class RejectShopRequest(BaseModel):

@@ -10,7 +10,18 @@ from app.core.db import get_db
 from app.core.order_status import RECOGNIZED_STATUSES as RECOGNIZED_ORDER_STATUSES
 from app.core.security import require_role
 from app.core.utils import parse_uuid_or_404
-from app.models import Address, AttributeSchema, AuditLog, Order, PlatformSettings, Product, Profile, Shop
+from app.models import (
+    Address,
+    AttributeSchema,
+    AuditLog,
+    Order,
+    PlatformSettings,
+    Product,
+    Profile,
+    Shop,
+    SponsorshipPlan,
+    SponsorshipPurchase,
+)
 from app.schemas.admin import (
     VALID_APPROVAL_STATUSES,
     AdminShopOut,
@@ -29,6 +40,7 @@ from app.schemas.admin import (
     UserStatusUpdate,
 )
 from app.schemas.attribute_schema import AttributeSchemaOut, AttributeSchemaUpsert
+from app.schemas.sponsorship import AdminPurchaseOut, AdminSponsorshipSummary, PlanOut, PlanUpdate, PurchaseOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -315,6 +327,8 @@ async def list_all_shops(
             "owner_email": owner_email,
             "owner_name": owner_name,
             "location": city,
+            "sponsored_until": shop.sponsored_until,
+            "is_sponsored": shop.is_sponsored,
         }
         for shop, owner_email, owner_name, city in result.all()
     ]
@@ -350,6 +364,8 @@ async def _shop_out(db: AsyncSession, shop: Shop) -> dict:
         "owner_email": owner_email,
         "owner_name": owner_name,
         "location": city,
+        "sponsored_until": shop.sponsored_until,
+        "is_sponsored": shop.is_sponsored,
     }
 
 
@@ -391,6 +407,123 @@ async def update_shop_status(
     await invalidate("shops:list", f"shop:{shop_id}", "categories:list")
 
     return await _shop_out(db, shop)
+
+
+@router.post("/shops/{shop_id}/sponsorship/revoke", response_model=AdminShopOut)
+async def revoke_shop_sponsorship(
+    shop_id: str,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Moderation only — ends a shop's paid priority immediately (e.g. a
+    policy violation). Sponsorship is BOUGHT by shop owners themselves
+    from their dashboard (routers/sponsorship.py); admins don't grant it.
+    """
+    shop = await _shop_or_404(db, shop_id)
+    old_until = shop.sponsored_until
+    shop.sponsored_until = None
+    _record_audit(
+        db,
+        admin,
+        action="shop_sponsorship_revoked",
+        target_type="shop",
+        target_id=shop.id,
+        details={"shop_name": shop.name, "old_sponsored_until": old_until.isoformat() if old_until else None},
+    )
+    await db.commit()
+    await db.refresh(shop)
+    await invalidate("shops:list", f"shop:{shop_id}")
+    return await _shop_out(db, shop)
+
+
+@router.get("/sponsorships", response_model=AdminSponsorshipSummary)
+async def list_sponsorships(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Who has bought sponsorship: totals plus the latest paid purchases."""
+    now = func.now()
+    active = await db.scalar(
+        select(func.count()).select_from(Shop).where(Shop.sponsored_until > now)
+    )
+    total_shops = await db.scalar(
+        select(func.count()).select_from(Shop).where(Shop.approval_status == "approved")
+    )
+    paid_count, revenue = (
+        await db.execute(
+            select(func.count(), func.coalesce(func.sum(SponsorshipPurchase.amount), 0)).where(
+                SponsorshipPurchase.status == "paid"
+            )
+        )
+    ).one()
+    rows = (
+        await db.execute(
+            select(SponsorshipPurchase, Shop.name, Profile.email)
+            .join(Shop, Shop.id == SponsorshipPurchase.shop_id)
+            .outerjoin(Profile, Profile.id == Shop.owner_id)
+            .where(SponsorshipPurchase.status == "paid")
+            .order_by(SponsorshipPurchase.paid_at.desc())
+            .limit(200)
+        )
+    ).all()
+    return AdminSponsorshipSummary(
+        active_shops=active or 0,
+        total_shops=total_shops or 0,
+        paid_purchases=paid_count,
+        revenue=revenue,
+        purchases=[
+            AdminPurchaseOut(
+                **PurchaseOut.model_validate(p).model_dump(),
+                shop_id=p.shop_id,
+                shop_name=shop_name,
+                owner_email=email,
+            )
+            for p, shop_name, email in rows
+        ],
+    )
+
+
+@router.get("/sponsorship-plans", response_model=list[PlanOut])
+async def list_sponsorship_plans(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SponsorshipPlan).order_by(SponsorshipPlan.sort_order))
+    return result.scalars().all()
+
+
+@router.put("/sponsorship-plans/{key}", response_model=PlanOut)
+async def update_sponsorship_plan(
+    key: str,
+    payload: PlanUpdate,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change a plan's price / name / availability. Takes effect for NEW
+    purchases only — past purchases keep what they were bought at."""
+    plan = await db.get(SponsorshipPlan, key)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if payload.price is not None:
+        if payload.price <= 0:
+            raise HTTPException(status_code=422, detail="Price must be greater than 0")
+        plan.price = payload.price
+    if payload.name is not None and payload.name.strip():
+        plan.name = payload.name.strip()
+    if payload.is_active is not None:
+        plan.is_active = payload.is_active
+    _record_audit(
+        db,
+        admin,
+        action="sponsorship_plan_updated",
+        target_type="sponsorship_plan",
+        target_id=None,
+        details={"key": key, **payload.model_dump(mode="json", exclude_none=True)},
+    )
+    await db.commit()
+    await db.refresh(plan)
+    return plan
 
 
 @router.patch("/shops/{shop_id}/approve", response_model=AdminShopOut)

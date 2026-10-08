@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -102,7 +102,18 @@ class Shop(Base):
     # the next time they resubmit.
     rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Paid-priority placement: while this is in the future the shop ranks
+    # above non-sponsored shops in search/listings and carries a public
+    # "Sponsored" label. NULL / past = not sponsored. Admin-set only.
+    sponsored_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def is_sponsored(self) -> bool:
+        return self.sponsored_until is not None and self.sponsored_until > datetime.now(timezone.utc)
 
     # Composite index (Phase 7): GET /shops's hottest query is exactly
     # `WHERE is_active = true ORDER BY rating DESC LIMIT 50` — this one

@@ -15,6 +15,7 @@ import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
 import { StaffTab } from "@/components/shop-dashboard/StaffTab";
 import { PaymentSettingsTab } from "@/components/shop-dashboard/PaymentSettingsTab";
+import { SponsorshipTab } from "@/components/shop-dashboard/SponsorshipTab";
 import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
 import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
@@ -30,6 +31,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   inventory: "Inventory",
   analytics: "Analytics",
   payments: "Payments",
+  promote: "Promote",
   staff: "Staff",
 };
 
@@ -284,6 +286,13 @@ export default function ShopDashboardPage() {
               shop={selectedShop}
               userId={profile!.id}
               onSaved={(updated) => setShops((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
+            />
+          )}
+          {selectedShopId && tab === "promote" && selectedShop && (
+            <SponsorshipTab
+              key={selectedShop.id}
+              shopId={selectedShop.id}
+              approved={selectedShop.approval_status === "approved"}
             />
           )}
           {selectedShopId && tab === "staff" && <StaffTab shopId={selectedShopId} />}

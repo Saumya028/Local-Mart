@@ -189,6 +189,10 @@ class DashboardShopOut(ShopOut):
 
     approval_status: str
     docs_status: str
+    # Owner can see their own promotion status (never exposed publicly —
+    # customers just see the resulting ranking).
+    sponsored_until: datetime | None = None
+    is_sponsored: bool = False
     documents: list[ShopDocument]
     rejection_reason: str | None
     attributes: dict

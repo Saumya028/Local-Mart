@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     log_level: str = "INFO"
 
+    # Sponsorship purchases (shop owner pays the PLATFORM for priority
+    # placement). With the key pair set, checkout uses Razorpay; with it
+    # empty AND environment != "production", checkout runs in a clearly
+    # labelled TEST mode (no real money) so the flow can be exercised
+    # locally. In production with no keys, buying is disabled (503).
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    # Razorpay Dashboard -> Webhooks (event: payment.captured) pointed at
+    # POST /sponsorship/webhook. Safety net for a buyer who pays and then
+    # closes the tab before the browser-side confirm call lands.
+    razorpay_webhook_secret: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

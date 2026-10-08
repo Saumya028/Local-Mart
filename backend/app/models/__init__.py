@@ -10,6 +10,7 @@ from app.models.product import Product
 from app.models.profile import Profile
 from app.models.return_request import ReturnRequest
 from app.models.shop import Shop
+from app.models.sponsorship import SponsorshipPlan, SponsorshipPurchase
 from app.models.wishlist_item import WishlistItem
 
 # Alembic's env.py imports `Base` from here and reads `Base.metadata`.
@@ -29,4 +30,6 @@ __all__ = [
     "WishlistItem",
     "AttributeSchema",
     "ReturnRequest",
+    "SponsorshipPlan",
+    "SponsorshipPurchase",
 ]

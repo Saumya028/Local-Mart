@@ -2,27 +2,43 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
-import { AdminShop, timeAgo, docsStatusMeta } from "./types";
+import { AdminShop, AdminSponsorships, formatINR, matchesSearch, timeAgo, docsStatusMeta } from "./types";
 
-type SubTab = "pending" | "all";
+type SubTab = "pending" | "all" | "sponsorships";
 
-export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: number) => void }) {
+export function ShopsTab({
+  search = "",
+  onPendingCountChange,
+}: {
+  search?: string;
+  onPendingCountChange?: (n: number) => void;
+}) {
   const [subTab, setSubTab] = useState<SubTab>("pending");
   const [pendingShops, setPendingShops] = useState<AdminShop[]>([]);
   const [allShops, setAllShops] = useState<AdminShop[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [sponsorships, setSponsorships] = useState<AdminSponsorships | null>(null);
+
+  const shopMatches = (s: AdminShop) => matchesSearch(search, s.name, s.category, s.owner_name, s.owner_email, s.location);
+  const shownPending = pendingShops.filter(shopMatches);
+  const shownAll = allShops.filter(shopMatches);
+  const shownPurchases = (sponsorships?.purchases ?? []).filter((p) =>
+    matchesSearch(search, p.shop_name, p.owner_email, p.plan_name)
+  );
 
   async function load() {
     setLoading(true);
     try {
-      const [pending, all] = await Promise.all([
+      const [pending, all, spons] = await Promise.all([
         apiFetch("/admin/shops?approval_status=pending"),
         apiFetch("/admin/shops"),
+        apiFetch("/admin/sponsorships"),
       ]);
       setPendingShops(pending);
       setAllShops(all);
+      setSponsorships(spons);
       onPendingCountChange?.(pending.length);
       setError(null);
     } catch (err) {
@@ -53,6 +69,21 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
         method: "PATCH",
         body: reason !== null ? JSON.stringify({ reason: reason || null }) : undefined,
       });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  // Moderation only — sponsorship is BOUGHT by shop owners from their own
+  // dashboard (Promote tab), never granted here.
+  async function revokeSponsorship(shop: AdminShop) {
+    if (!window.confirm(`End "${shop.name}"'s paid promotion now? This does not refund them.`)) return;
+    setActingId(shop.id);
+    try {
+      await apiFetch(`/admin/shops/${shop.id}/sponsorship/revoke`, { method: "POST" });
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -100,6 +131,14 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
         >
           All Shops
         </button>
+        <button
+          onClick={() => setSubTab("sponsorships")}
+          className={`text-sm font-medium rounded-lg px-3 sm:px-4 py-2 transition-colors whitespace-nowrap flex-1 sm:flex-none ${
+            subTab === "sponsorships" ? "bg-white shadow-sm text-gray-900" : "text-gray-500"
+          }`}
+        >
+          Sponsorships
+        </button>
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
@@ -107,11 +146,13 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
       {loading ? (
         <p className="text-sm text-gray-400">Loading shops…</p>
       ) : subTab === "pending" ? (
-        pendingShops.length === 0 ? (
-          <p className="text-sm text-gray-400">No shops waiting on approval.</p>
+        shownPending.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            {search.trim() ? "No pending shops match your search." : "No shops waiting on approval."}
+          </p>
         ) : (
           <div className="space-y-4">
-            {pendingShops.map((shop) => (
+            {shownPending.map((shop) => (
               <div key={shop.id} className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="flex items-center gap-4 min-w-0">
                   <div className="w-11 h-11 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
@@ -181,8 +222,67 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
             ))}
           </div>
         )
-      ) : allShops.length === 0 ? (
-        <p className="text-sm text-gray-400">No shops yet.</p>
+      ) : subTab === "sponsorships" ? (
+        sponsorships && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                <p className="text-xs text-gray-400">Sponsored right now</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">
+                  {sponsorships.active_shops}
+                  <span className="text-sm font-medium text-gray-400"> / {sponsorships.total_shops} shops</span>
+                </p>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                <p className="text-xs text-gray-400">Purchases</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{sponsorships.paid_purchases}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                <p className="text-xs text-gray-400">Sponsorship revenue</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{formatINR(sponsorships.revenue)}</p>
+              </div>
+            </div>
+            {shownPurchases.length === 0 ? (
+              <p className="text-sm text-gray-400">
+                {search.trim() ? "No purchases match your search." : "No shop has bought a promotion yet."}
+              </p>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                      <th className="px-5 py-3 font-medium">Shop</th>
+                      <th className="px-5 py-3 font-medium">Plan</th>
+                      <th className="px-5 py-3 font-medium">Amount</th>
+                      <th className="px-5 py-3 font-medium">Paid on</th>
+                      <th className="px-5 py-3 font-medium">Runs until</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shownPurchases.map((p) => (
+                      <tr key={p.id} className="border-b border-gray-50 last:border-0">
+                        <td className="px-5 py-3 font-medium text-gray-900">
+                          {p.shop_name}
+                          <span className="block text-xs font-normal text-gray-400">{p.owner_email}</span>
+                        </td>
+                        <td className="px-5 py-3 text-gray-500">{p.plan_name}</td>
+                        <td className="px-5 py-3 text-gray-500">{formatINR(p.amount)}</td>
+                        <td className="px-5 py-3 text-gray-500">
+                          {p.paid_at ? new Date(p.paid_at).toLocaleDateString("en-IN") : "—"}
+                        </td>
+                        <td className="px-5 py-3 text-gray-500">
+                          {p.ends_at ? new Date(p.ends_at).toLocaleDateString("en-IN") : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      ) : shownAll.length === 0 ? (
+        <p className="text-sm text-gray-400">{search.trim() ? "No shops match your search." : "No shops yet."}</p>
       ) : (
         <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
@@ -193,11 +293,12 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
                 <th className="px-5 py-3 font-medium">Owner</th>
                 <th className="px-5 py-3 font-medium">Rating</th>
                 <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium">Sponsored</th>
                 <th className="px-5 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {allShops.map((shop) => (
+              {shownAll.map((shop) => (
                 <tr key={shop.id} className="border-b border-gray-50 last:border-0">
                   <td className="px-5 py-3 font-medium text-gray-900">{shop.name}</td>
                   <td className="px-5 py-3 text-gray-500">{shop.category}</td>
@@ -216,7 +317,29 @@ export function ShopsTab({ onPendingCountChange }: { onPendingCountChange?: (n: 
                       {shop.approval_status === "rejected" ? "Rejected" : shop.is_active ? "Active" : "Deactivated"}
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-right">
+                  <td className="px-5 py-3">
+                    {shop.is_sponsored ? (
+                      <span className="text-xs font-medium rounded-full px-2.5 py-1 bg-amber-50 text-amber-700">
+                        Active · until {new Date(shop.sponsored_until!).toLocaleDateString("en-IN")}
+                      </span>
+                    ) : shop.sponsored_until ? (
+                      <span className="text-xs text-gray-400">
+                        Expired {new Date(shop.sponsored_until).toLocaleDateString("en-IN")}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">Not purchased</span>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-right space-x-3">
+                    {shop.is_sponsored && (
+                      <button
+                        onClick={() => revokeSponsorship(shop)}
+                        disabled={actingId === shop.id}
+                        className="text-xs text-gray-500 hover:underline disabled:opacity-50"
+                      >
+                        End promotion
+                      </button>
+                    )}
                     {shop.approval_status === "approved" && (
                       <button
                         onClick={() => toggleActive(shop)}

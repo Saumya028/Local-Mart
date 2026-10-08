@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attribute_validation import validate_attributes
@@ -39,6 +39,13 @@ def _distance_expr(lat: float, lng: float):
     return EARTH_RADIUS_KM * func.acos(func.greatest(-1.0, func.least(1.0, cos_angle)))
 
 
+def _sponsored_rank():
+    """1 while a shop's paid promotion is active, else 0 — sort DESC on
+    this to put paying shops first. Evaluated in SQL against now(), so a
+    sponsorship lapses on its own the moment sponsored_until passes."""
+    return case((Shop.sponsored_until > func.now(), 1), else_=0)
+
+
 @router.get("", response_model=list[ShopOut])
 async def list_shops(
     category: str | None = Query(default=None),
@@ -72,7 +79,7 @@ async def list_shops(
             result = await db.execute(
                 select(Shop)
                 .where(Shop.is_active.is_(True), Shop.approval_status == "approved")
-                .order_by(Shop.rating.desc())
+                .order_by(_sponsored_rank().desc(), Shop.rating.desc())
                 .limit(50)
             )
             shops = result.scalars().all()
@@ -104,7 +111,7 @@ async def list_shops(
             stmt = stmt.where(Shop.category == category)
         if q:
             stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
-        stmt = stmt.order_by(distance.asc()).limit(limit)
+        stmt = stmt.order_by(_sponsored_rank().desc(), distance.asc()).limit(limit)
 
         result = await db.execute(stmt)
         out = []
@@ -119,7 +126,7 @@ async def list_shops(
         stmt = stmt.where(Shop.category == category)
     if q:
         stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
-    stmt = stmt.order_by(Shop.rating.desc()).limit(limit)
+    stmt = stmt.order_by(_sponsored_rank().desc(), Shop.rating.desc()).limit(limit)
 
     result = await db.execute(stmt)
     return result.scalars().all()
