@@ -26,6 +26,10 @@ class PlatformSettings(Base):
     min_order_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=99, server_default="99")
     max_delivery_radius_km: Mapped[float] = mapped_column(Numeric(5, 2), default=5, server_default="5")
 
+    # How close (km) a customer must be to a shop to see that shop's paid
+    # banners. Deliberately separate from the delivery radius.
+    banner_radius_km: Mapped[float] = mapped_column(Numeric(5, 2), default=1, server_default="1")
+
     # [{"key": "razorpay", "name": "Razorpay", "enabled": true, "primary": true}, ...]
     # A small, fixed list of gateways is genuinely just config, not
     # something with its own lifecycle/relations that would justify a

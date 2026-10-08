@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
+import { BannerSlot } from "@/components/banners/BannerSlot";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 
 type Product = {
@@ -58,6 +59,8 @@ export default async function SearchPage({
           <NearMeToggle active={nearMeActive} radiusKm={null} basePath="/search" label="results from shops" />
         </Suspense>
       </div>
+
+      <BannerSlot slot="search_top" promptForLocation className="!px-0" />
 
       <form action="/search" className="flex gap-2 max-w-xl">
         <input

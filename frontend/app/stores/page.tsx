@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
+import { BannerSlot } from "@/components/banners/BannerSlot";
 
 type Shop = {
   id: string;
@@ -63,6 +64,8 @@ export default async function StoresPage({
           <NearMeToggle active={nearMeActive} radiusKm={null} />
         </Suspense>
       </div>
+
+      <BannerSlot slot="stores_top" promptForLocation className="!px-0" />
 
       <form className="flex gap-2 max-w-md">
         <input

@@ -169,6 +169,7 @@ class PlatformSettingsOut(BaseModel):
     delivery_payout: Decimal
     min_order_amount: Decimal
     max_delivery_radius_km: Decimal
+    banner_radius_km: Decimal
     payment_gateways: list[PaymentGateway]
     updated_at: datetime
 
@@ -186,4 +187,5 @@ class PlatformSettingsUpdate(BaseModel):
     delivery_payout: Decimal | None = None
     min_order_amount: Decimal | None = None
     max_delivery_radius_km: Decimal | None = None
+    banner_radius_km: Decimal | None = None
     payment_gateways: list[PaymentGateway] | None = None

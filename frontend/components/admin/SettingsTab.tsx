@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
-import { PlatformSettings } from "./types";
+import { BannerSlot, PlatformSettings, SponsorshipPlan } from "./types";
 
-type FieldKey = "commission_pct" | "delivery_payout" | "min_order_amount" | "max_delivery_radius_km";
+type FieldKey = "commission_pct" | "delivery_payout" | "min_order_amount" | "max_delivery_radius_km" | "banner_radius_km";
 
 const FIELDS: { key: FieldKey; label: string; help: string; suffix: string; prefix?: string }[] = [
   { key: "commission_pct", label: "Platform Commission", help: "Commission percentage on each order", suffix: "%" },
   { key: "delivery_payout", label: "Delivery Partner Payout", help: "Base payout per delivery", suffix: "", prefix: "₹" },
   { key: "min_order_amount", label: "Min Order Amount", help: "Minimum order value for delivery", suffix: "", prefix: "₹" },
   { key: "max_delivery_radius_km", label: "Max Delivery Radius", help: "Maximum distance for deliveries", suffix: " km" },
+  { key: "banner_radius_km", label: "Banner Visibility Radius", help: "A shop's banners are shown only to customers within this distance of the shop", suffix: " km" },
 ];
 
 export function SettingsTab() {
@@ -20,6 +21,66 @@ export function SettingsTab() {
   const [editingField, setEditingField] = useState<FieldKey | null>(null);
   const [draftValue, setDraftValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [plans, setPlans] = useState<SponsorshipPlan[]>([]);
+  const [planDrafts, setPlanDrafts] = useState<Record<string, string>>({});
+  const [bannerSlots, setBannerSlots] = useState<BannerSlot[]>([]);
+  const [slotDrafts, setSlotDrafts] = useState<Record<string, string>>({});
+
+  async function loadSlots() {
+    try {
+      setBannerSlots(await apiFetch("/admin/banner-slots"));
+    } catch {
+      /* card just stays empty */
+    }
+  }
+
+  async function saveSlot(key: string, patch: { price?: string; is_active?: boolean }) {
+    setSaving(true);
+    try {
+      const updated: BannerSlot = await apiFetch(`/admin/banner-slots/${key}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      setBannerSlots((prev) => prev.map((s) => (s.key === key ? updated : s)));
+      setSlotDrafts((d) => {
+        const { [key]: _removed, ...rest } = d;
+        return rest;
+      });
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function loadPlans() {
+    try {
+      setPlans(await apiFetch("/admin/sponsorship-plans"));
+    } catch {
+      /* plans card just stays empty */
+    }
+  }
+
+  async function savePlan(key: string, patch: { price?: string; is_active?: boolean }) {
+    setSaving(true);
+    try {
+      const updated: SponsorshipPlan = await apiFetch(`/admin/sponsorship-plans/${key}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      setPlans((prev) => prev.map((p) => (p.key === key ? updated : p)));
+      setPlanDrafts((d) => {
+        const { [key]: _removed, ...rest } = d;
+        return rest;
+      });
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -36,6 +97,8 @@ export function SettingsTab() {
 
   useEffect(() => {
     load();
+    loadPlans();
+    loadSlots();
   }, []);
 
   function startEdit(field: FieldKey, currentValue: string) {
@@ -168,6 +231,108 @@ export function SettingsTab() {
                   <span
                     className={`absolute left-0 top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${
                       g.enabled ? "translate-x-[20px]" : "translate-x-[2px]"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
+        <h3 className="font-semibold text-gray-900 mb-1">Shop Promotion Plans</h3>
+        <p className="text-xs text-gray-400">
+          What shop owners pay to be shown first. Price changes apply to new purchases only.
+        </p>
+        <div className="divide-y divide-gray-50 mt-3">
+          {plans.map((p) => (
+            <div key={p.key} className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div>
+                <p className="text-sm font-medium text-gray-900">{p.name}</p>
+                <p className="text-xs text-gray-400">{p.days} days of priority placement</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">₹</span>
+                <input
+                  value={planDrafts[p.key] ?? String(Number(p.price))}
+                  onChange={(e) => setPlanDrafts((d) => ({ ...d, [p.key]: e.target.value }))}
+                  inputMode="decimal"
+                  className="w-24 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {planDrafts[p.key] !== undefined && (
+                  <button
+                    onClick={() => savePlan(p.key, { price: planDrafts[p.key] })}
+                    disabled={saving}
+                    className="text-xs font-medium bg-blue-600 text-white rounded-lg px-3 py-1.5 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                )}
+                <button
+                  role="switch"
+                  aria-checked={p.is_active}
+                  onClick={() => savePlan(p.key, { is_active: !p.is_active })}
+                  disabled={saving}
+                  title={p.is_active ? "Available to shop owners" : "Hidden from shop owners"}
+                  className={`relative shrink-0 w-10 h-[22px] rounded-full transition-colors disabled:opacity-50 ${
+                    p.is_active ? "bg-blue-600" : "bg-gray-200"
+                  }`}
+                >
+                  <span
+                    className={`absolute left-0 top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${
+                      p.is_active ? "translate-x-[20px]" : "translate-x-[2px]"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6">
+        <h3 className="font-semibold text-gray-900 mb-1">Banner Spots</h3>
+        <p className="text-xs text-gray-400">
+          Price per booking (each runs for the days shown). Changes apply to new payments only.
+        </p>
+        <div className="divide-y divide-gray-50 mt-3">
+          {bannerSlots.map((s) => (
+            <div key={s.key} className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div>
+                <p className="text-sm font-medium text-gray-900">{s.name}</p>
+                <p className="text-xs text-gray-400">
+                  {s.width}×{s.height}px · {s.duration_days} days
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">₹</span>
+                <input
+                  value={slotDrafts[s.key] ?? String(Number(s.price))}
+                  onChange={(e) => setSlotDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
+                  inputMode="decimal"
+                  className="w-24 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {slotDrafts[s.key] !== undefined && (
+                  <button
+                    onClick={() => saveSlot(s.key, { price: slotDrafts[s.key] })}
+                    disabled={saving}
+                    className="text-xs font-medium bg-blue-600 text-white rounded-lg px-3 py-1.5 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                )}
+                <button
+                  role="switch"
+                  aria-checked={s.is_active}
+                  onClick={() => saveSlot(s.key, { is_active: !s.is_active })}
+                  disabled={saving}
+                  title={s.is_active ? "Available to shop owners" : "Hidden / not sold"}
+                  className={`relative shrink-0 w-10 h-[22px] rounded-full transition-colors disabled:opacity-50 ${
+                    s.is_active ? "bg-blue-600" : "bg-gray-200"
+                  }`}
+                >
+                  <span
+                    className={`absolute left-0 top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-transform ${
+                      s.is_active ? "translate-x-[20px]" : "translate-x-[2px]"
                     }`}
                   />
                 </button>

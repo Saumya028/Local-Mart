@@ -16,6 +16,7 @@ import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
 import { StaffTab } from "@/components/shop-dashboard/StaffTab";
 import { PaymentSettingsTab } from "@/components/shop-dashboard/PaymentSettingsTab";
 import { SponsorshipTab } from "@/components/shop-dashboard/SponsorshipTab";
+import { BannersTab } from "@/components/shop-dashboard/BannersTab";
 import { ShopStatusScreen } from "@/components/shop-dashboard/ShopStatusScreen";
 import { DocumentUploader } from "@/components/shop-dashboard/DocumentUploader";
 import { Shop } from "@/components/shop-dashboard/types";
@@ -32,6 +33,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   analytics: "Analytics",
   payments: "Payments",
   promote: "Promote",
+  banners: "Banners",
   staff: "Staff",
 };
 
@@ -292,6 +294,14 @@ export default function ShopDashboardPage() {
             <SponsorshipTab
               key={selectedShop.id}
               shopId={selectedShop.id}
+              approved={selectedShop.approval_status === "approved"}
+            />
+          )}
+          {selectedShopId && tab === "banners" && selectedShop && (
+            <BannersTab
+              key={selectedShop.id}
+              shopId={selectedShop.id}
+              userId={profile!.id}
               approved={selectedShop.approval_status === "approved"}
             />
           )}

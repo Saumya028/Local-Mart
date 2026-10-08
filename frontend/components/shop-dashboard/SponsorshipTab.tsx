@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
+import { loadRazorpay } from "@/lib/razorpay";
 
 type Plan = { key: string; name: string; days: number; price: string; is_active: boolean };
 type PlansResponse = { mode: "razorpay" | "test" | null; razorpay_key_id: string | null; plans: Plan[] };
@@ -23,24 +24,6 @@ type Checkout = {
   amount_paise: number | null;
   plan_name: string;
 };
-
-// Razorpay's hosted checkout popup. Loaded on demand so it never touches
-// pages that don't sell anything.
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => { open: () => void; on: (e: string, cb: () => void) => void };
-  }
-}
-function loadRazorpay(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (window.Razorpay) return resolve(true);
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.body.appendChild(s);
-  });
-}
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";

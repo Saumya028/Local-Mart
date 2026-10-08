@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.db import AsyncSessionLocal, get_db
 from app.core.security import require_role
 from app.core.sponsorship import (
+    activate_banner_payment,
     activate_purchase,
     create_razorpay_order,
     payment_mode,
@@ -17,7 +18,7 @@ from app.core.sponsorship import (
     verify_webhook_signature,
 )
 from app.core.utils import parse_uuid_or_404
-from app.models import Profile, SponsorshipPlan, SponsorshipPurchase
+from app.models import BannerPayment, Profile, SponsorshipPlan, SponsorshipPurchase
 from app.routers.shop_dashboard import _get_owned_shop_or_403
 from app.schemas.sponsorship import (
     CheckoutRequest,
@@ -198,4 +199,13 @@ async def razorpay_webhook(
             await activate_purchase(db, purchase.id, entity.get("id"))
             await db.commit()
             await _invalidate_shop_caches(purchase.shop_id)
+        else:
+            # Not a sponsorship purchase — maybe a banner payment (same
+            # Razorpay account / same webhook).
+            banner_payment = (
+                await db.execute(select(BannerPayment).where(BannerPayment.provider_order_id == order_id))
+            ).scalar_one_or_none()
+            if banner_payment is not None:
+                await activate_banner_payment(db, banner_payment.id, entity.get("id"))
+                await db.commit()
     return {"received": True}

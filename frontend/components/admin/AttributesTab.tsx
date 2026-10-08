@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
+import { matchesSearch } from "./types";
 import { AttributeField } from "@/lib/attributeSchema";
 
 type SchemaRow = { id: string; kind: "product" | "shop"; category: string; fields: AttributeField[] };
 
 const EMPTY_FIELD: AttributeField = { key: "", label: "", type: "text", required: false, options: [] };
 
-export function AttributesTab() {
+export function AttributesTab({ search = "" }: { search?: string }) {
   const [schemas, setSchemas] = useState<SchemaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -231,7 +232,7 @@ export function AttributesTab() {
               </tr>
             </thead>
             <tbody>
-              {schemas.map((row) => (
+              {schemas.filter((row) => matchesSearch(search, row.category, row.kind)).map((row) => (
                 <tr key={row.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40">
                   <td className="px-5 py-3 font-medium text-gray-800">{row.category}</td>
                   <td className="px-5 py-3 text-gray-500 capitalize">{row.kind}</td>

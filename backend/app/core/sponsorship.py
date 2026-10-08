@@ -80,3 +80,34 @@ async def activate_purchase(db: AsyncSession, purchase_id, payment_id: str | Non
     purchase.ends_at = end
     purchase.paid_at = now
     return purchase
+
+
+async def activate_banner_payment(db: AsyncSession, payment_id, provider_payment_id: str | None):
+    """Banner counterpart of activate_purchase(): idempotent, row-locked,
+    extends Banner.ends_at (stacking on the remaining time if the banner
+    is still live, so renewing early loses nothing). Caller commits."""
+    from app.models import Banner, BannerPayment
+
+    payment = (
+        await db.execute(select(BannerPayment).where(BannerPayment.id == payment_id).with_for_update())
+    ).scalar_one_or_none()
+    if payment is None:
+        return None
+    if payment.status == "paid":
+        return payment
+
+    banner = (await db.execute(select(Banner).where(Banner.id == payment.banner_id).with_for_update())).scalar_one()
+    now = datetime.now(timezone.utc)
+    still_live = banner.ends_at is not None and banner.ends_at > now
+    start = banner.ends_at if still_live else now
+    end = start + timedelta(days=payment.days)
+
+    if not still_live:
+        banner.starts_at = now
+    banner.ends_at = end
+    payment.status = "paid"
+    payment.provider_payment_id = provider_payment_id
+    payment.starts_at = start
+    payment.ends_at = end
+    payment.paid_at = now
+    return payment

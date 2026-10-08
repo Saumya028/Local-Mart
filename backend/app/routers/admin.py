@@ -14,6 +14,9 @@ from app.models import (
     Address,
     AttributeSchema,
     AuditLog,
+    Banner,
+    BannerPayment,
+    BannerSlot,
     Order,
     PlatformSettings,
     Product,
@@ -40,6 +43,8 @@ from app.schemas.admin import (
     UserStatusUpdate,
 )
 from app.schemas.attribute_schema import AttributeSchemaOut, AttributeSchemaUpsert
+from app.routers.banners import owner_banner_out
+from app.schemas.banner import AdminBannerOut, AdminBannersResponse, RejectBanner, SlotOut, SlotUpdate
 from app.schemas.sponsorship import AdminPurchaseOut, AdminSponsorshipSummary, PlanOut, PlanUpdate, PurchaseOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -482,6 +487,156 @@ async def list_sponsorships(
             for p, shop_name, email in rows
         ],
     )
+
+
+async def _banner_or_404(db: AsyncSession, banner_id: str) -> Banner:
+    banner = await db.get(Banner, parse_uuid_or_404(banner_id, "Banner"))
+    if banner is None:
+        raise HTTPException(status_code=404, detail="Banner not found")
+    return banner
+
+
+async def _admin_banner_out(db: AsyncSession, banner: Banner) -> AdminBannerOut:
+    slot = await db.get(BannerSlot, banner.slot_key)
+    shop = await db.get(Shop, banner.shop_id)
+    owner = await db.get(Profile, shop.owner_id)
+    return AdminBannerOut(
+        **owner_banner_out(banner, slot).model_dump(),
+        shop_id=shop.id,
+        shop_name=shop.name,
+        owner_email=owner.email if owner else None,
+        review_status=banner.review_status,
+    )
+
+
+@router.get("/banners", response_model=AdminBannersResponse)
+async def list_banners(
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every banner request, newest first, plus headline numbers."""
+    rows = (
+        await db.execute(
+            select(Banner, BannerSlot, Shop.id, Shop.name, Profile.email)
+            .join(BannerSlot, BannerSlot.key == Banner.slot_key)
+            .join(Shop, Shop.id == Banner.shop_id)
+            .outerjoin(Profile, Profile.id == Shop.owner_id)
+            .order_by(Banner.created_at.desc())
+            .limit(300)
+        )
+    ).all()
+    revenue = await db.scalar(
+        select(func.coalesce(func.sum(BannerPayment.amount), 0)).where(BannerPayment.status == "paid")
+    )
+    banners = [
+        AdminBannerOut(
+            **owner_banner_out(b, slot).model_dump(),
+            shop_id=shop_id,
+            shop_name=shop_name,
+            owner_email=email,
+            review_status=b.review_status,
+        )
+        for b, slot, shop_id, shop_name, email in rows
+    ]
+    return AdminBannersResponse(
+        pending_count=sum(1 for b in banners if b.state == "pending"),
+        live_count=sum(1 for b in banners if b.state == "live"),
+        revenue=revenue or 0,
+        banners=banners,
+    )
+
+
+@router.post("/banners/{banner_id}/approve", response_model=AdminBannerOut)
+async def approve_banner(
+    banner_id: str, admin: Profile = Depends(RequireAdmin), db: AsyncSession = Depends(get_db)
+):
+    """Approving lets the shop owner pay; the banner goes live only once
+    the payment is verified (so a rejected banner never needs a refund)."""
+    banner = await _banner_or_404(db, banner_id)
+    if banner.review_status != "pending":
+        raise HTTPException(status_code=409, detail="Only pending banners can be approved")
+    banner.review_status = "approved"
+    banner.rejection_reason = None
+    banner.reviewed_at = datetime.now(timezone.utc)
+    _record_audit(db, admin, "banner_approved", "banner", banner.id, {"slot": banner.slot_key})
+    await db.commit()
+    await db.refresh(banner)
+    return await _admin_banner_out(db, banner)
+
+
+@router.post("/banners/{banner_id}/reject", response_model=AdminBannerOut)
+async def reject_banner(
+    banner_id: str,
+    payload: RejectBanner,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    banner = await _banner_or_404(db, banner_id)
+    if banner.state not in ("pending", "awaiting_payment"):
+        raise HTTPException(status_code=409, detail="Only banners that aren't live yet can be rejected")
+    banner.review_status = "rejected"
+    banner.rejection_reason = payload.reason.strip()
+    banner.reviewed_at = datetime.now(timezone.utc)
+    _record_audit(
+        db, admin, "banner_rejected", "banner", banner.id, {"slot": banner.slot_key, "reason": banner.rejection_reason}
+    )
+    await db.commit()
+    await db.refresh(banner)
+    return await _admin_banner_out(db, banner)
+
+
+@router.post("/banners/{banner_id}/takedown", response_model=AdminBannerOut)
+async def takedown_banner(
+    banner_id: str, admin: Profile = Depends(RequireAdmin), db: AsyncSession = Depends(get_db)
+):
+    """Moderation: pulls a LIVE banner off the site immediately (e.g. a
+    policy violation). Does not refund."""
+    banner = await _banner_or_404(db, banner_id)
+    if banner.state != "live":
+        raise HTTPException(status_code=409, detail="That banner isn't live")
+    old_end = banner.ends_at
+    banner.ends_at = datetime.now(timezone.utc)
+    _record_audit(
+        db, admin, "banner_taken_down", "banner", banner.id,
+        {"slot": banner.slot_key, "old_ends_at": old_end.isoformat() if old_end else None},
+    )
+    await db.commit()
+    await db.refresh(banner)
+    return await _admin_banner_out(db, banner)
+
+
+@router.get("/banner-slots", response_model=list[SlotOut])
+async def list_banner_slots(admin: Profile = Depends(RequireAdmin), db: AsyncSession = Depends(get_db)):
+    return (await db.execute(select(BannerSlot).order_by(BannerSlot.sort_order))).scalars().all()
+
+
+@router.put("/banner-slots/{key}", response_model=SlotOut)
+async def update_banner_slot(
+    key: str,
+    payload: SlotUpdate,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Price / duration / availability of a banner spot. Applies to NEW
+    payments only; banners already paid for keep running their term."""
+    slot = await db.get(BannerSlot, key)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Banner spot not found")
+    if payload.price is not None:
+        if payload.price <= 0:
+            raise HTTPException(status_code=422, detail="Price must be greater than 0")
+        slot.price = payload.price
+    if payload.duration_days is not None:
+        slot.duration_days = payload.duration_days
+    if payload.is_active is not None:
+        slot.is_active = payload.is_active
+    _record_audit(
+        db, admin, "banner_slot_updated", "banner_slot", None,
+        {"key": key, **payload.model_dump(mode="json", exclude_none=True)},
+    )
+    await db.commit()
+    await db.refresh(slot)
+    return slot
 
 
 @router.get("/sponsorship-plans", response_model=list[PlanOut])

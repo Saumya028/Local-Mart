@@ -6,6 +6,7 @@ import { PopularProducts, ProductData } from "@/components/home/PopularProducts"
 import { WhyChooseUs } from "@/components/home/WhyChooseUs";
 import { Testimonials } from "@/components/home/Testimonials";
 import { CTASection } from "@/components/home/CTASection";
+import { BannerSlot } from "@/components/banners/BannerSlot";
 
 type Stats = { total_shops: number; total_customers: number };
 
@@ -60,8 +61,10 @@ export default async function Home() {
           </div>
         </section>
 
+        <BannerSlot slot="home_top" promptForLocation className="pt-8" />
         <CategoryGrid categories={categories} />
         <FeaturedStores shops={featuredShops} />
+        <BannerSlot slot="home_middle" className="py-6" />
         <PopularProducts products={products} />
         <WhyChooseUs />
         <Testimonials />

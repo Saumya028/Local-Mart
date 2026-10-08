@@ -7,13 +7,23 @@ import { Topbar } from "@/components/admin/Topbar";
 import { DashboardTab } from "@/components/admin/DashboardTab";
 import { ShopsTab } from "@/components/admin/ShopsTab";
 import { UsersTab } from "@/components/admin/UsersTab";
+import { BannersTab } from "@/components/admin/BannersTab";
 import { AttributesTab } from "@/components/admin/AttributesTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
 
+// Tabs whose list the top-bar search box filters (others hide the box).
+const SEARCH_PLACEHOLDERS: Partial<Record<AdminTabKey, string>> = {
+  shops: "Search shops, owners, categories…",
+  banners: "Search shops or banner spots…",
+  users: "Search name, email or role…",
+  attributes: "Search categories…",
+};
+
 const TAB_TITLES: Record<AdminTabKey, string> = {
   dashboard: "Dashboard",
   shops: "Shops",
+  banners: "Banners",
   users: "Users",
   attributes: "Attributes",
   reports: "Reports",
@@ -24,6 +34,7 @@ export default function AdminPanelPage() {
   const { profile, loading: authLoading, loggedIn } = useAuth();
   const [tab, setTab] = useState<AdminTabKey>("dashboard");
   const [pendingShopsCount, setPendingShopsCount] = useState(0);
+  const [search, setSearch] = useState("");
   // Mobile nav drawer (the sidebar is off-canvas below the `md` breakpoint).
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -68,19 +79,30 @@ export default function AdminPanelPage() {
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar
         tab={tab}
-        onSelectTab={setTab}
+        onSelectTab={(t) => {
+          setTab(t);
+          setSearch("");
+        }}
         pendingShopsCount={pendingShopsCount}
         adminEmail={profile?.email ?? null}
         open={menuOpen}
         onClose={closeMenu}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Topbar title={TAB_TITLES[tab]} badgeCount={pendingShopsCount} onMenu={() => setMenuOpen(true)} />
+        <Topbar
+          title={TAB_TITLES[tab]}
+          badgeCount={pendingShopsCount}
+          onMenu={() => setMenuOpen(true)}
+          search={search}
+          onSearch={setSearch}
+          searchPlaceholder={SEARCH_PLACEHOLDERS[tab]}
+        />
         <div className="flex-1 min-w-0">
           {tab === "dashboard" && <DashboardTab onGoToShops={() => setTab("shops")} />}
-          {tab === "shops" && <ShopsTab onPendingCountChange={setPendingShopsCount} />}
-          {tab === "users" && <UsersTab selfId={profile?.id ?? null} />}
-          {tab === "attributes" && <AttributesTab />}
+          {tab === "shops" && <ShopsTab search={search} onPendingCountChange={setPendingShopsCount} />}
+          {tab === "banners" && <BannersTab search={search} />}
+          {tab === "users" && <UsersTab search={search} selfId={profile?.id ?? null} />}
+          {tab === "attributes" && <AttributesTab search={search} />}
           {tab === "reports" && <ReportsTab />}
           {tab === "settings" && <SettingsTab />}
         </div>

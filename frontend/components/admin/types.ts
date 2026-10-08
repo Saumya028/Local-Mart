@@ -85,6 +85,7 @@ export type PlatformSettings = {
   delivery_payout: string;
   min_order_amount: string;
   max_delivery_radius_km: string;
+  banner_radius_km: string;
   payment_gateways: PaymentGateway[];
   updated_at: string;
 };
@@ -138,3 +139,44 @@ const FALLBACK_COLORS = ["#2563eb", "#10b981", "#8b5cf6", "#f59e0b", "#ec4899", 
 export function categoryColor(category: string, index: number): string {
   return CATEGORY_COLORS[category] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
 }
+
+export type BannerSlot = {
+  key: string;
+  name: string;
+  description: string;
+  width: number;
+  height: number;
+  price: string;
+  duration_days: number;
+  is_active: boolean;
+};
+
+export type AdminBannerState = "pending" | "rejected" | "awaiting_payment" | "live" | "expired";
+
+export type AdminBanner = {
+  id: string;
+  shop_id: string;
+  shop_name: string;
+  owner_email: string | null;
+  slot_key: string;
+  slot_name: string;
+  width: number;
+  height: number;
+  price: string;
+  duration_days: number;
+  image_url: string;
+  title: string | null;
+  state: AdminBannerState;
+  rejection_reason: string | null;
+  ends_at: string | null;
+  impressions: number;
+  clicks: number;
+  created_at: string;
+};
+
+export type AdminBanners = {
+  pending_count: number;
+  live_count: number;
+  revenue: string;
+  banners: AdminBanner[];
+};

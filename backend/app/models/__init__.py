@@ -1,6 +1,7 @@
 from app.models.address import Address
 from app.models.attribute_schema import AttributeSchema
 from app.models.audit_log import AuditLog
+from app.models.banner import Banner, BannerPayment, BannerSlot
 from app.models.base import Base
 from app.models.order import Order
 from app.models.order_item import OrderItem
@@ -32,4 +33,7 @@ __all__ = [
     "ReturnRequest",
     "SponsorshipPlan",
     "SponsorshipPurchase",
+    "Banner",
+    "BannerPayment",
+    "BannerSlot",
 ]

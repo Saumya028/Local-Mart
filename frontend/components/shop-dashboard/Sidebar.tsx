@@ -3,7 +3,7 @@
 import { NavDrawer } from "@/components/dashboard/NavDrawer";
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "payments" | "promote" | "staff";
+export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "payments" | "promote" | "banners" | "staff";
 
 // Which tabs each role can see, in nav order. Purely a UI convenience —
 // the backend independently enforces the same boundaries on every
@@ -13,8 +13,8 @@ export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventor
 // except Staff (owner-only); a delivery hire gets Orders alone — the
 // one tab their whole job is built around.
 const ROLE_TABS: Record<string, TabKey[]> = {
-  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "staff"],
-  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "staff"],
+  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
+  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
   manager: ["dashboard", "orders", "returns", "products", "inventory", "analytics"],
   delivery_partner: ["orders"],
 };
@@ -126,6 +126,17 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
     icon: (
       <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
         <path d="M10 2.5l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 7.8l5-.7L10 2.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "banners",
+    label: "Banners",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <rect x="2.5" y="4.5" width="15" height="8" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M6 16h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M5.5 10l2.2-2.2 2 2 1.6-1.6 3.2 3.2" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" />
       </svg>
     ),
   },
