@@ -15,6 +15,9 @@ export function ProductGallery({ images, alt }: { images: string[]; alt: string 
       <img
         src={images[active]}
         alt={alt}
+        // The main product image is the page's LCP element: fetch it first.
+        fetchPriority="high"
+        decoding="async"
         className="w-full aspect-square object-contain bg-white rounded-xl border border-gray-100"
       />
       {images.length > 1 && (
@@ -28,7 +31,7 @@ export function ProductGallery({ images, alt }: { images: string[]; alt: string 
               }`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="" className="w-full h-full object-cover" />
+              <img src={url} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
             </button>
           ))}
         </div>

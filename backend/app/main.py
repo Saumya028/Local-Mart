@@ -4,6 +4,7 @@ import uuid
 import redis.exceptions
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -72,6 +73,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestIDMiddleware)
+# Compress JSON responses (search/shop lists are the big ones).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # CORS: only known frontend origin(s) are allowed to call this API with
 # credentials. We deliberately do NOT use "*" here — that's a common

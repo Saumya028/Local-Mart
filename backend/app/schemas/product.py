@@ -65,6 +65,8 @@ class ProductDetailOut(ProductOut):
     # product left in its group — the picker only renders when there's
     # actually something to pick between (see routers/products.py).
     variants: list[VariantSummary] = []
+    # attribute key -> display label, so the page needs no extra request.
+    attribute_labels: dict[str, str] = {}
 
 
 class ProductCreate(BaseModel):

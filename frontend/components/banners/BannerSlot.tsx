@@ -16,6 +16,29 @@ type Banner = {
   height: number;
 };
 
+// Shared across every BannerSlot instance and every remount (React Strict
+// Mode, route changes, the location event firing twice). Without this the
+// same /banners/public request was sent 3x per page view. Results are kept
+// for a short window; concurrent identical requests share one promise.
+const BANNER_TTL_MS = 60_000;
+const bannerCache = new Map<string, { at: number; promise: Promise<Banner[]> }>();
+
+function loadBanners(slot: string, lat: number, lng: number): Promise<Banner[]> {
+  const key = `${slot}|${lat}|${lng}`;
+  const hit = bannerCache.get(key);
+  if (hit && Date.now() - hit.at < BANNER_TTL_MS) return hit.promise;
+
+  const params = new URLSearchParams({ slot, lat: String(lat), lng: String(lng) });
+  const promise = fetch(`${API_URL}/banners/public?${params}`)
+    .then((r) => (r.ok ? (r.json() as Promise<Banner[]>) : []))
+    .catch(() => {
+      bannerCache.delete(key); // don't cache failures
+      return [] as Banner[];
+    });
+  bannerCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
 /**
  * One pre-decided banner spot (e.g. "home_top"). Asks the API for banners
  * from shops near THIS visitor — the server does the distance check, so
@@ -38,26 +61,28 @@ export function BannerSlot({
   const [banners, setBanners] = useState<Banner[]>([]);
   const [index, setIndex] = useState(0);
 
+  // Depend on the primitive coordinates, not the `loc` object: the hook
+  // hands back a NEW object each time it re-syncs, which used to re-run this
+  // effect (and re-fetch) even though the position hadn't changed.
+  const lat = loc?.lat;
+  const lng = loc?.lng;
+
   useEffect(() => {
-    if (!loc) {
+    if (lat === undefined || lng === undefined) {
       setBanners([]);
       return;
     }
     let cancelled = false;
-    const params = new URLSearchParams({ slot, lat: String(loc.lat), lng: String(loc.lng) });
-    fetch(`${API_URL}/banners/public?${params}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: Banner[]) => {
-        if (!cancelled) {
-          setBanners(data);
-          setIndex(0);
-        }
-      })
-      .catch(() => {});
+    loadBanners(slot, lat, lng).then((data) => {
+      if (!cancelled) {
+        setBanners(data);
+        setIndex(0);
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [slot, loc]);
+  }, [slot, lat, lng]);
 
   // Rotate when several nearby shops advertise in the same spot.
   useEffect(() => {
@@ -97,7 +122,14 @@ export function BannerSlot({
         aria-label={b.title ?? `Visit ${b.shop_name}`}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- advertiser-uploaded Supabase Storage URL */}
-        <img src={b.image_url} alt={b.title ?? b.shop_name} className="absolute inset-0 w-full h-full object-cover" />
+        <img
+          src={b.image_url}
+          alt={b.title ?? b.shop_name}
+          width={b.width}
+          height={b.height}
+          decoding="async"
+          className="absolute inset-0 w-full h-full object-cover"
+        />
       </Link>
       {banners.length > 1 && (
         <div className="flex justify-center gap-1.5 mt-2">

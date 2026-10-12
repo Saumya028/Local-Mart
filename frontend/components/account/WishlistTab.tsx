@@ -70,7 +70,7 @@ export function WishlistTab({ onLoaded }: { onLoaded?: (items: WishlistEntry[]) 
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {items.map((entry) => (
         <div key={entry.id} className="bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-3">
-          <Link href={`/product/${entry.product.id}`} className="min-w-0 flex-1">
+          <Link prefetch={false} href={`/product/${entry.product.id}`} className="min-w-0 flex-1">
             <p className="font-medium text-gray-900 text-sm truncate">{entry.product.name}</p>
             <p className="text-xs text-gray-400 truncate">{entry.shop_name}</p>
             <p className="text-sm font-semibold text-gray-800 mt-1">₹{entry.product.price}</p>

@@ -1,7 +1,5 @@
 type ShopInfo = { id: string; name: string; category: string; rating: number };
 
-type AttributeField = { key: string; label: string; type: string };
-
 type VariantSummary = {
   id: string;
   variant_attributes: Record<string, string>;
@@ -23,6 +21,7 @@ type ProductDetail = {
   variant_attributes: Record<string, string>;
   variants: VariantSummary[];
   shop: ShopInfo | null;
+  attribute_labels?: Record<string, string>;
 };
 
 import Link from "next/link";
@@ -44,25 +43,14 @@ async function getProduct(id: string): Promise<ProductDetail | null> {
     // Defensive: a response served from a cache entry written before
     // variants existed on this product (60s Redis TTL on the backend)
     // may be missing this field entirely — never trust it unconditionally.
-    return { ...data, variants: data.variants ?? [], images: data.images ?? [] };
+    return {
+      ...data,
+      variants: data.variants ?? [],
+      images: data.images ?? [],
+      attribute_labels: data.attribute_labels ?? {},
+    };
   } catch {
     return null;
-  }
-}
-
-async function getAttributeLabels(category: string): Promise<Record<string, string>> {
-  // Best-effort only — falls back to showing the raw attribute key if
-  // this fails or the category has no schema, same as before this was
-  // added. Never worth failing the whole product page over.
-  try {
-    const res = await fetch(`${API_URL}/attribute-schemas/product/${encodeURIComponent(category)}`, {
-      next: { revalidate: 300 },
-    });
-    if (!res.ok) return {};
-    const data: { fields: AttributeField[] } = await res.json();
-    return Object.fromEntries(data.fields.map((f) => [f.key, f.label]));
-  } catch {
-    return {};
   }
 }
 
@@ -84,7 +72,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const attributeEntries = Object.entries(product.attributes || {}).filter(
     ([, value]) => value !== "" && value !== null
   );
-  const labels = attributeEntries.length > 0 ? await getAttributeLabels(product.category) : {};
+  // Labels now arrive with the product itself (one request, not two in sequence).
+  const labels = product.attribute_labels ?? {};
   const variantSummary = Object.entries(product.variant_attributes || {})
     .map(([k, v]) => `${k}: ${v}`)
     .join(", ");

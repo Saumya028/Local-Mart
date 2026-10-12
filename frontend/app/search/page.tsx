@@ -94,13 +94,13 @@ export default async function SearchPage({
           {products.map((p) => (
             <Link
               key={p.id}
-              href={`/product/${p.id}`}
+              prefetch={false} href={`/product/${p.id}`}
               className="border rounded-lg overflow-hidden hover:border-blue-400 transition"
             >
               <div className={`relative h-24 flex items-center justify-center text-2xl overflow-hidden ${categoryBg(p.category)}`}>
                 {p.images?.[0] ? (
                   // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
-                  <img src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
+                  <img loading="lazy" decoding="async" src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
                 ) : (
                   categoryIcon(p.category)
                 )}

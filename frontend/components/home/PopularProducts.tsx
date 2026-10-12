@@ -26,7 +26,7 @@ export function PopularProducts({ products }: { products: ProductData[] }) {
               <div className={`relative h-28 flex items-center justify-center text-3xl overflow-hidden ${categoryBg(p.category)}`}>
                 {p.images?.[0] ? (
                   // eslint-disable-next-line @next/next/no-img-element -- user-uploaded Supabase Storage URL
-                  <img src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
+                  <img loading="lazy" decoding="async" src={p.images[0]} alt="" className="absolute inset-0 w-full h-full object-contain p-2 bg-white" />
                 ) : (
                   categoryIcon(p.category)
                 )}
@@ -34,7 +34,7 @@ export function PopularProducts({ products }: { products: ProductData[] }) {
                   <WishlistButton productId={p.id} />
                 </div>
               </div>
-              <Link href={`/product/${p.id}`} className="block p-3">
+              <Link prefetch={false} href={`/product/${p.id}`} className="block p-3">
                 <p className="text-xs text-gray-400">{p.category}</p>
                 <p className="text-sm font-medium text-gray-900 mt-0.5 line-clamp-2">{p.name}</p>
                 <p className="text-sm font-semibold text-gray-900 mt-1.5">₹{p.price}</p>

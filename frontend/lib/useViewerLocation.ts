@@ -49,7 +49,13 @@ export function useViewerLocation() {
   const [status, setStatus] = useState<"idle" | "asking" | "denied" | "unsupported">("idle");
 
   useEffect(() => {
-    const sync = () => setLoc(readCached());
+    // Keep the same object when nothing changed so consumers don't re-render.
+    const sync = () =>
+      setLoc((prev) => {
+        const next = readCached();
+        if (prev && next && prev.lat === next.lat && prev.lng === next.lng) return prev;
+        return next;
+      });
     sync();
     window.addEventListener(EVENT, sync);
 

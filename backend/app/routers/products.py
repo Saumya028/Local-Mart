@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.attribute_validation import get_schema_fields
 from app.core.cache import cache_get_or_set
 from app.core.db import get_db
 from app.core.utils import parse_uuid_or_404
@@ -24,15 +25,18 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
     pid = parse_uuid_or_404(product_id, "Product")
 
     async def load():
-        result = await db.execute(
-            select(Product).where(Product.id == pid, Product.is_active.is_(True))
-        )
-        product = result.scalar_one_or_none()
-        if product is None:
+        # ONE round trip for product + its shop (was two sequential
+        # queries). Each avoided query is a full network hop to Postgres.
+        row = (
+            await db.execute(
+                select(Product, Shop)
+                .join(Shop, Shop.id == Product.shop_id, isouter=True)
+                .where(Product.id == pid, Product.is_active.is_(True))
+            )
+        ).first()
+        if row is None:
             return None
-
-        shop_result = await db.execute(select(Shop).where(Shop.id == product.shop_id))
-        shop = shop_result.scalar_one_or_none()
+        product, shop = row
 
         variants = []
         if product.variant_group_id is not None:
@@ -58,9 +62,18 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
                     for s in siblings
                 ]
 
+        # Human labels for the "Item details" list, embedded here so the
+        # frontend doesn't need a second, sequential API call (which cost a
+        # full extra server -> API -> Redis/DB round trip on every render).
+        attribute_labels: dict[str, str] = {}
+        if product.attributes:
+            fields = await get_schema_fields(db, "product", product.category)
+            attribute_labels = {f["key"]: f.get("label", f["key"]) for f in fields}
+
         data = ProductOut.model_validate(product).model_dump(mode="json")
         data["shop"] = ShopOut.model_validate(shop).model_dump(mode="json") if shop else None
         data["variants"] = variants
+        data["attribute_labels"] = attribute_labels
         return data
 
     data = await cache_get_or_set(f"product:{product_id}", ttl_seconds=60, loader=load)

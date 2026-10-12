@@ -1,10 +1,11 @@
+import time
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.db import get_db
+from app.core.db import AsyncSessionLocal, get_db
 from app.core.security import require_role
 from app.core.sponsorship import (
     activate_banner_payment,
@@ -33,6 +34,36 @@ RequireOwner = require_role("shop_owner", "admin")
 # frontend rotates through them.
 MAX_PER_SLOT = 5
 
+# The banner radius is a rarely-changed platform setting, but it used to be
+# read from Postgres on EVERY public banner request — an extra sequential
+# round trip on the hot path. Cache it in-process for a short while.
+_RADIUS_TTL_S = 60.0
+_radius_cache: tuple[float, float] | None = None  # (value_km, fetched_at_monotonic)
+
+
+async def _banner_radius_km(db: AsyncSession) -> float:
+    global _radius_cache
+    now = time.monotonic()
+    if _radius_cache is not None and now - _radius_cache[1] < _RADIUS_TTL_S:
+        return _radius_cache[0]
+    settings_row = await db.get(PlatformSettings, 1)
+    radius = float(settings_row.banner_radius_km) if settings_row else 1.0
+    _radius_cache = (radius, now)
+    return radius
+
+
+async def _count_impressions(banner_ids: list[uuid.UUID]) -> None:
+    """Runs AFTER the response is sent, on its own session, so the
+    customer never waits on this write."""
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(Banner).where(Banner.id.in_(banner_ids)).values(impressions=Banner.impressions + 1)
+            )
+            await session.commit()
+    except Exception:  # best-effort analytics; never surface to the customer
+        pass
+
 
 def owner_banner_out(banner: Banner, slot: BannerSlot) -> OwnerBannerOut:
     return OwnerBannerOut(
@@ -60,6 +91,7 @@ def owner_banner_out(banner: Banner, slot: BannerSlot) -> OwnerBannerOut:
 
 @router.get("/public", response_model=list[PublicBannerOut])
 async def public_banners(
+    background: BackgroundTasks,
     slot: str = Query(...),
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
@@ -75,8 +107,7 @@ async def public_banners(
     Not cached: the answer is per-location. Also counts an impression for
     each banner served.
     """
-    settings_row = await db.get(PlatformSettings, 1)
-    radius = float(settings_row.banner_radius_km) if settings_row else 1.0
+    radius = await _banner_radius_km(db)
     distance = _distance_expr(lat, lng)
 
     rows = (
@@ -101,10 +132,7 @@ async def public_banners(
     ).all()
 
     if rows:
-        await db.execute(
-            update(Banner).where(Banner.id.in_([r[0].id for r in rows])).values(impressions=Banner.impressions + 1)
-        )
-        await db.commit()
+        background.add_task(_count_impressions, [r[0].id for r in rows])
 
     return [
         PublicBannerOut(
