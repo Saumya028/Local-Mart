@@ -54,6 +54,8 @@ export type OrderDetailItem = {
   unit_price: string;
   subtotal: string;
   returned_qty: number;
+  // The customer's own review of this product, if they wrote one.
+  review_id?: string | null;
 };
 
 export type OrderDetail = AccountOrder & {
@@ -62,6 +64,8 @@ export type OrderDetail = AccountOrder & {
   delivery_proof_photo_url?: string | null;
   shop: { id: string; name: string; address_line1?: string | null; city?: string | null } | null;
   payment?: PaymentInfo | null;
+  // The customer's own review of this shop, if they wrote one.
+  shop_review_id?: string | null;
 };
 
 export type ReturnRequestType = "return" | "exchange";

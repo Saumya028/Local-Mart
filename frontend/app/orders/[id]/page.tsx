@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
 import UpiPayPanel from "@/components/payment/UpiPayPanel";
+import { ReviewFormModal } from "@/components/reviews/ReviewFormModal";
+import { MyReview, ReviewEligibility, ReviewKind, reviewsPath } from "@/components/reviews/types";
 import {
   OrderDetail,
   OrderDetailItem,
@@ -42,6 +44,12 @@ export default function OrderDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [cancellingOrder, setCancellingOrder] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<{
+    kind: ReviewKind;
+    id: string;
+    name: string;
+    existing: MyReview | null;
+  } | null>(null);
 
   async function load() {
     try {
@@ -119,6 +127,22 @@ export default function OrderDetailPage() {
     }
   }
 
+  // Opens the review form for a product or this order's shop. Loads the
+  // customer's existing review first (if any) so the same button edits it.
+  async function openReview(kind: ReviewKind, id: string, name: string) {
+    setActionError(null);
+    try {
+      const e: ReviewEligibility = await apiFetch(`${reviewsPath(kind, id)}/mine`);
+      if (!e.can_review) {
+        setActionError(e.reason ?? "You can't review this yet.");
+        return;
+      }
+      setReviewTarget({ kind, id, name, existing: e.review });
+    } catch (err) {
+      setActionError((err as Error).message);
+    }
+  }
+
   function returnsForItem(itemId: string) {
     return returns.filter((r) => r.order_item_id === itemId);
   }
@@ -140,6 +164,7 @@ export default function OrderDetailPage() {
   }
 
   const isPickup = order.fulfillment_type === "pickup";
+  const fulfilled = order.status === "delivered" || order.status === "picked_up";
   const eligibleForReturn =
     (order.status === "delivered" || order.status === "picked_up") && isWithinReturnWindow(order.delivered_at);
 
@@ -241,6 +266,15 @@ export default function OrderDetailPage() {
                 <span>₹{item.subtotal}</span>
               </div>
 
+              {fulfilled && (
+                <button
+                  onClick={() => openReview("product", item.product_id, item.product_name)}
+                  className="text-xs text-amber-600 hover:underline block"
+                >
+                  {item.review_id ? "★ Edit your review" : "☆ Rate this product"}
+                </button>
+              )}
+
               {eligibleForReturn && remaining > 0 && (
                 <button
                   onClick={() => setActiveItem(item)}
@@ -306,6 +340,20 @@ export default function OrderDetailPage() {
         <span>₹{order.total_amount}</span>
       </div>
 
+      {fulfilled && order.shop && (
+        <div className="rounded-xl bg-amber-50 px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-amber-800">
+            {order.shop_review_id ? `Your review of ${order.shop.name}` : `How was ${order.shop.name}?`}
+          </p>
+          <button
+            onClick={() => openReview("shop", order.shop!.id, order.shop!.name)}
+            className="text-sm font-medium text-amber-700 hover:underline whitespace-nowrap"
+          >
+            {order.shop_review_id ? "Edit review" : "Rate this shop"}
+          </button>
+        </div>
+      )}
+
       <div className="text-sm">
         {isPickup ? (
           <>
@@ -321,6 +369,20 @@ export default function OrderDetailPage() {
           </>
         )}
       </div>
+
+      {reviewTarget && (
+        <ReviewFormModal
+          kind={reviewTarget.kind}
+          targetId={reviewTarget.id}
+          targetName={reviewTarget.name}
+          existing={reviewTarget.existing}
+          onClose={() => setReviewTarget(null)}
+          onSaved={() => {
+            setReviewTarget(null);
+            load();
+          }}
+        />
+      )}
 
       {activeItem && order.shop && (
         <ReturnRequestModal

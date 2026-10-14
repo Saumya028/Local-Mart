@@ -149,6 +149,8 @@ class ShopOut(BaseModel):
     name: str
     category: str
     rating: float
+    # Number of visible shop reviews behind `rating` (0 = no reviews yet).
+    rating_count: int = 0
     is_active: bool
     created_at: datetime
     # Public — a storefront's rough location/address is meant to be

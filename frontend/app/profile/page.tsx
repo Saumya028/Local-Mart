@@ -10,6 +10,7 @@ import { ReturnsTab } from "@/components/account/ReturnsTab";
 import { WishlistTab } from "@/components/account/WishlistTab";
 import { AddressesTab } from "@/components/account/AddressesTab";
 import { SettingsTab } from "@/components/account/SettingsTab";
+import { ReviewsTab } from "@/components/account/ReviewsTab";
 import { ComingSoonTab } from "@/components/account/ComingSoonTab";
 
 const TAB_TITLES: Record<AccountTabKey, string> = {
@@ -114,12 +115,7 @@ function ProfilePageContent() {
               description="LocalMart doesn't store any payment details — you pay each shop directly by UPI or cash, and the money never passes through us."
             />
           )}
-          {tab === "reviews" && (
-            <ComingSoonTab
-              title="Reviews are coming soon"
-              description="Product and shop reviews aren't built yet — this tab will show reviews you've left once that feature ships."
-            />
-          )}
+          {tab === "reviews" && <ReviewsTab />}
           {tab === "notifications" && (
             <ComingSoonTab
               title="Notifications are coming soon"

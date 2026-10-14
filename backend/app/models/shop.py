@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -53,7 +53,10 @@ class Shop(Base):
     # pattern used on Product.attributes.
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
 
+    # Average of the shop's visible shop reviews (see app/core/reviews.py);
+    # 0 with rating_count 0 means "no reviews yet".
     rating: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    rating_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Owner-toggleable (Shop Dashboard sidebar) — whether this shop's
     # storefront/cart/checkout offer "Pick up from the shop" at all. True
     # by default so every existing shop keeps offering it unless the

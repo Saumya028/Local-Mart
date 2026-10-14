@@ -18,7 +18,18 @@ from app.core.payment_confirmation import (
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.utils import parse_uuid_or_404
-from app.models import Address, Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
+from app.models import (
+    Address,
+    Order,
+    OrderItem,
+    Payment,
+    Product,
+    ProductReview,
+    Profile,
+    ReturnRequest,
+    Shop,
+    ShopReview,
+)
 from app.core.upi import PAYMENT_METHODS, build_upi_link, is_valid_payer_reference
 from app.schemas.order import (
     ChangePaymentMethodRequest,
@@ -336,6 +347,21 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
     )
     returned_by_item = dict(returned_result.all())
 
+    # The customer's own reviews of these products / this shop, so the
+    # order page can offer "Rate" vs "Edit your review" without extra calls.
+    review_result = await db.execute(
+        select(ProductReview.product_id, ProductReview.id).where(
+            ProductReview.user_id == order.user_id,
+            ProductReview.product_id.in_([item.product_id for item, _ in order_items]),
+        )
+    )
+    review_by_product = dict(review_result.all())
+    shop_review_id = (
+        await db.execute(
+            select(ShopReview.id).where(ShopReview.user_id == order.user_id, ShopReview.shop_id == order.shop_id)
+        )
+    ).scalar_one_or_none()
+
     items = [
         {
             "id": item.id,
@@ -345,6 +371,7 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
             "unit_price": item.unit_price,
             "subtotal": item.unit_price * item.quantity,
             "returned_qty": int(returned_by_item.get(item.id, 0)),
+            "review_id": review_by_product.get(item.product_id),
         }
         for item, name in order_items
     ]
@@ -354,6 +381,7 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
     data["shop_name"] = shop.name if shop else None
     data["item_count"] = sum(i["quantity"] for i in items)
     data["items"] = items
+    data["shop_review_id"] = shop_review_id
     payment = await get_payment(db, order.id)
     data["payment_method"] = payment.method if payment else None
     data["payment_status"] = payment.status if payment else None

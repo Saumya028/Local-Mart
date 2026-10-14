@@ -3,12 +3,14 @@ import { Suspense } from "react";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
 import { BannerSlot } from "@/components/banners/BannerSlot";
+import { RatingBadge } from "@/components/reviews/StarRating";
 
 type Shop = {
   id: string;
   name: string;
   category: string;
   rating: number;
+  rating_count?: number;
   created_at: string;
   city: string | null;
   distance_km: number | null;
@@ -115,7 +117,7 @@ export default async function StoresPage({
                 </div>
                 <p className="font-semibold text-gray-900 text-sm mt-0.5">{shop.name}</p>
                 <div className="flex items-center justify-between mt-1.5">
-                  <p className="text-xs text-amber-500">★ {shop.rating.toFixed(1)}</p>
+                  <RatingBadge average={shop.rating} count={shop.rating_count ?? 0} />
                   {shop.distance_km != null && (
                     <p className="text-xs text-emerald-600 font-medium">{shop.distance_km} km</p>
                   )}

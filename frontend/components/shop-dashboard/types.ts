@@ -5,6 +5,7 @@ export type Shop = {
   name: string;
   category: string;
   rating: number;
+  rating_count?: number;
   is_active: boolean;
   created_at: string;
   approval_status: "pending" | "approved" | "rejected";

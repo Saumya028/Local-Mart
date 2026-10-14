@@ -1,4 +1,4 @@
-type ShopInfo = { id: string; name: string; category: string; rating: number };
+type ShopInfo = { id: string; name: string; category: string; rating: number; rating_count?: number };
 
 type VariantSummary = {
   id: string;
@@ -22,6 +22,8 @@ type ProductDetail = {
   variants: VariantSummary[];
   shop: ShopInfo | null;
   attribute_labels?: Record<string, string>;
+  rating_avg?: number;
+  rating_count?: number;
 };
 
 import Link from "next/link";
@@ -29,6 +31,8 @@ import AddToCartButton from "@/components/AddToCartButton";
 import WishlistButton from "@/components/WishlistButton";
 import { ProductGallery } from "@/components/ProductGallery";
 import { VariantPicker } from "@/components/VariantPicker";
+import { RatingBadge, StarRating } from "@/components/reviews/StarRating";
+import { ProductReviewsSection } from "@/components/reviews/ProductReviewsSection";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -88,6 +92,14 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <p className="text-xs text-gray-400">{product.category}</p>
             <h1 className="text-2xl font-bold">{product.name}</h1>
             {variantSummary && <p className="text-sm text-gray-500 mt-0.5">{variantSummary}</p>}
+            {(product.rating_count ?? 0) > 0 && (
+              <a href="#reviews" className="inline-flex items-center gap-2 mt-1.5 hover:underline">
+                <StarRating value={product.rating_avg ?? 0} size={16} />
+                <span className="text-sm text-gray-600">
+                  {(product.rating_avg ?? 0).toFixed(1)} · {product.rating_count} review{product.rating_count === 1 ? "" : "s"}
+                </span>
+              </a>
+            )}
           </div>
 
           <p className="text-2xl font-semibold">₹{product.price}</p>
@@ -114,7 +126,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <Link href={`/store/${product.shop.id}`} className="font-medium text-blue-600 hover:underline">
                   {product.shop.name}
                 </Link>{" "}
-                · ★ {product.shop.rating.toFixed(1)}
+                · <RatingBadge average={product.shop.rating} count={product.shop.rating_count ?? 0} className="text-sm" />
               </p>
             </div>
           )}
@@ -135,6 +147,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             </div>
           )}
         </div>
+      </div>
+
+      <div id="reviews" className="mt-12 border-t pt-8 scroll-mt-20">
+        <ProductReviewsSection productId={product.id} productName={product.name} shopName={product.shop?.name} />
       </div>
     </main>
   );

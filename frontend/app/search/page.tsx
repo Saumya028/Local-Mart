@@ -3,6 +3,7 @@ import Link from "next/link";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
 import { BannerSlot } from "@/components/banners/BannerSlot";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
+import { RatingBadge } from "@/components/reviews/StarRating";
 
 type Product = {
   id: string;
@@ -10,6 +11,8 @@ type Product = {
   price: string;
   category: string;
   images: string[];
+  rating_avg?: number;
+  rating_count?: number;
   shop_name?: string | null;
   distance_km?: number | null;
 };
@@ -115,6 +118,9 @@ export default async function SearchPage({
                 )}
                 <p className="text-xs text-gray-500">{p.category}</p>
                 <p className="text-sm font-semibold mt-1">₹{p.price}</p>
+                {(p.rating_count ?? 0) > 0 && (
+                  <p className="mt-0.5"><RatingBadge average={p.rating_avg ?? 0} count={p.rating_count ?? 0} /></p>
+                )}
               </div>
             </Link>
           ))}

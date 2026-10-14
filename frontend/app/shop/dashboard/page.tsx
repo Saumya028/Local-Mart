@@ -10,6 +10,7 @@ import { Topbar } from "@/components/shop-dashboard/Topbar";
 import { DashboardTab } from "@/components/shop-dashboard/DashboardTab";
 import { OrdersTab } from "@/components/shop-dashboard/OrdersTab";
 import { ReturnsTab } from "@/components/shop-dashboard/ReturnsTab";
+import { ReviewsTab } from "@/components/shop-dashboard/ReviewsTab";
 import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
@@ -28,6 +29,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   dashboard: "Dashboard",
   orders: "Orders",
   returns: "Returns",
+  reviews: "Reviews",
   products: "Products",
   inventory: "Inventory",
   analytics: "Analytics",
@@ -47,6 +49,7 @@ export default function ShopDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
+  const [unrepliedReviews, setUnrepliedReviews] = useState(0);
   const [togglingPickup, setTogglingPickup] = useState(false);
   // Mobile nav drawer (the sidebar is off-canvas below the `md` breakpoint).
   const [menuOpen, setMenuOpen] = useState(false);
@@ -161,9 +164,18 @@ export default function ShopDashboardPage() {
         if (!cancelled) setPendingReturnsCount(returns.filter((r) => r.status === "requested").length);
       })
       .catch(() => {});
+    // Delivery staff have no access to reviews (the endpoint would 403).
+    if (profile?.role !== "delivery_partner") {
+      apiFetch(`/dashboard/reviews/summary?shop_id=${selectedShopId}`)
+        .then((s: { unreplied_count: number }) => {
+          if (!cancelled) setUnrepliedReviews(s.unreplied_count);
+        })
+        .catch(() => {});
+    }
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedShopId, tab, shops]);
 
   if (authLoading || !loggedIn || (canAccessDashboard && loadingShops)) {
@@ -257,6 +269,7 @@ export default function ShopDashboardPage() {
         onSelectTab={setTab}
         pendingCount={pendingCount}
         pendingReturnsCount={pendingReturnsCount}
+        unrepliedReviewsCount={unrepliedReviews}
         role={profile?.role}
         onTogglePickup={
           (profile?.role === "shop_owner" || profile?.role === "admin") && selectedShopId
@@ -279,6 +292,7 @@ export default function ShopDashboardPage() {
           )}
           {selectedShopId && tab === "orders" && <OrdersTab shopId={selectedShopId} />}
           {selectedShopId && tab === "returns" && <ReturnsTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "reviews" && <ReviewsTab shopId={selectedShopId} onSummary={setUnrepliedReviews} />}
           {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
           {selectedShopId && tab === "analytics" && <AnalyticsTab shopId={selectedShopId} />}

@@ -107,6 +107,9 @@ class OrderItemOut(BaseModel):
     # frontend grey out "Return" once every unit is already claimed,
     # without a separate call to list returns first.
     returned_qty: int = 0
+    # The customer's own review of this product, if they've written one
+    # (drives "Rate this product" vs "Edit your review" on the order page).
+    review_id: uuid.UUID | None = None
 
 
 class OrderDetailOut(OrderOut):
@@ -117,6 +120,8 @@ class OrderDetailOut(OrderOut):
     shop: ShopOut | None = None
     items: list[OrderItemOut] = []
     payment: PaymentInfo | None = None
+    # The customer's own review of this shop, if any.
+    shop_review_id: uuid.UUID | None = None
 
 
 class OrderStatusUpdate(BaseModel):

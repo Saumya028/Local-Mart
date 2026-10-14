@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import WishlistButton from "@/components/WishlistButton";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
+import { RatingBadge } from "@/components/reviews/StarRating";
+import { ShopReviewsSection } from "@/components/reviews/ShopReviewsSection";
 
-type Shop = { id: string; name: string; category: string; rating: number; is_active: boolean; created_at: string };
-type Product = { id: string; name: string; price: string; category: string; images: string[] };
+type Shop = { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
+type Product = { id: string; name: string; price: string; category: string; images: string[]; rating_avg?: number; rating_count?: number };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -53,7 +55,9 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
         <div>
           <p className="text-sm text-blue-600 font-medium">{shop.category}</p>
           <h1 className="text-2xl font-bold text-gray-900">{shop.name}</h1>
-          <p className="text-sm text-amber-500 mt-1">★ {shop.rating.toFixed(1)}</p>
+          <a href="#reviews" className="inline-block mt-1 hover:underline">
+            <RatingBadge average={shop.rating} count={shop.rating_count ?? 0} className="text-sm" />
+          </a>
         </div>
       </div>
 
@@ -79,11 +83,18 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
                 <Link prefetch={false} href={`/product/${p.id}`} className="block p-3">
                   <p className="text-sm font-medium text-gray-900 line-clamp-2">{p.name}</p>
                   <p className="text-sm font-semibold text-gray-900 mt-1.5">₹{p.price}</p>
+                  {(p.rating_count ?? 0) > 0 && (
+                    <p className="mt-0.5"><RatingBadge average={p.rating_avg ?? 0} count={p.rating_count ?? 0} /></p>
+                  )}
                 </Link>
               </div>
             ))}
           </div>
         )}
+      </div>
+
+      <div id="reviews" className="border-t pt-8 scroll-mt-20">
+        <ShopReviewsSection shopId={shop.id} shopName={shop.name} />
       </div>
     </main>
   );

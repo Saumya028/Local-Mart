@@ -32,7 +32,9 @@ from app.routers import (  # noqa: E402
     orders,
     products,
     returns,
+    reviews,
     shop_dashboard,
+    shop_reviews,
     shops,
     sponsorship,
     stats,
@@ -158,6 +160,8 @@ app.include_router(returns.router)
 app.include_router(wishlist.router)
 app.include_router(stats.router)
 app.include_router(shop_dashboard.router)
+app.include_router(shop_reviews.router)
+app.include_router(reviews.router)
 app.include_router(sponsorship.router)
 app.include_router(banners.router)
 app.include_router(admin.router)

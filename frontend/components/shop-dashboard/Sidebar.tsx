@@ -3,7 +3,7 @@
 import { NavDrawer } from "@/components/dashboard/NavDrawer";
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventory" | "analytics" | "payments" | "promote" | "banners" | "staff";
+export type TabKey = "dashboard" | "orders" | "returns" | "reviews" | "products" | "inventory" | "analytics" | "payments" | "promote" | "banners" | "staff";
 
 // Which tabs each role can see, in nav order. Purely a UI convenience —
 // the backend independently enforces the same boundaries on every
@@ -13,9 +13,9 @@ export type TabKey = "dashboard" | "orders" | "returns" | "products" | "inventor
 // except Staff (owner-only); a delivery hire gets Orders alone — the
 // one tab their whole job is built around.
 const ROLE_TABS: Record<string, TabKey[]> = {
-  shop_owner: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
-  admin: ["dashboard", "orders", "returns", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
-  manager: ["dashboard", "orders", "returns", "products", "inventory", "analytics"],
+  shop_owner: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
+  admin: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
+  manager: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics"],
   delivery_partner: ["orders"],
 };
 
@@ -74,6 +74,15 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
       <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
         <path d="M4 8h9a3.5 3.5 0 0 1 0 7H9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         <path d="M7 5 4 8l3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "reviews",
+    label: "Reviews",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <path d="M10 2.8l2.2 4.5 4.9.7-3.55 3.45.85 4.9L10 14l-4.4 2.35.85-4.9L2.9 8l4.9-.7L10 2.8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -161,6 +170,7 @@ export function Sidebar({
   onSelectTab,
   pendingCount,
   pendingReturnsCount = 0,
+  unrepliedReviewsCount = 0,
   role,
   onTogglePickup,
   togglingPickup = false,
@@ -174,6 +184,7 @@ export function Sidebar({
   onSelectTab: (t: TabKey) => void;
   pendingCount: number;
   pendingReturnsCount?: number;
+  unrepliedReviewsCount?: number;
   role?: string;
   // Owner/admin-only "Pick up from the shop" switch — omitted (and the
   // toggle hidden) for a manager/delivery_partner viewer, who can see
@@ -259,6 +270,11 @@ export function Sidebar({
             {item.key === "orders" && pendingCount > 0 && (
               <span className="bg-blue-600 text-white text-[11px] font-semibold rounded-full w-5 h-5 flex items-center justify-center">
                 {pendingCount}
+              </span>
+            )}
+            {item.key === "reviews" && unrepliedReviewsCount > 0 && (
+              <span className="bg-amber-500 text-white text-[11px] font-semibold rounded-full min-w-5 h-5 px-1 flex items-center justify-center">
+                {unrepliedReviewsCount}
               </span>
             )}
             {item.key === "returns" && pendingReturnsCount > 0 && (

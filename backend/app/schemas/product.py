@@ -28,6 +28,9 @@ class ProductOut(BaseModel):
     variant_attributes: dict = {}
     is_active: bool
     created_at: datetime
+    # Stored aggregates over visible reviews — see app/core/reviews.py.
+    rating_avg: float = 0.0
+    rating_count: int = 0
 
 
 class ProductSearchOut(ProductOut):
