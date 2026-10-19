@@ -2,7 +2,7 @@
 
 import { NavDrawer } from "@/components/dashboard/NavDrawer";
 
-export type AdminTabKey = "dashboard" | "shops" | "banners" | "users" | "attributes" | "reports" | "settings";
+export type AdminTabKey = "dashboard" | "shops" | "banners" | "users" | "attributes" | "reports" | "recommendations" | "settings";
 
 const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
   {
@@ -70,6 +70,15 @@ const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
       <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
         <path d="M5.5 2.5h6l3 3v12h-9v-15Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
         <path d="M7.3 10v3M10 8.3V13M12.7 11.3V13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "recommendations",
+    label: "Recommendations",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <path d="M10 2.5l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 7.8l5-.7L10 2.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       </svg>
     ),
   },

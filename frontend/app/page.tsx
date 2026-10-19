@@ -6,6 +6,7 @@ import { PopularProducts, ProductData } from "@/components/home/PopularProducts"
 import { WhyChooseUs } from "@/components/home/WhyChooseUs";
 import { Testimonials } from "@/components/home/Testimonials";
 import { CTASection } from "@/components/home/CTASection";
+import { RecommendationRail } from "@/components/recommendations/RecommendationRail";
 import { BannerSlot } from "@/components/banners/BannerSlot";
 
 type Stats = { total_shops: number; total_customers: number };
@@ -65,6 +66,14 @@ export default async function Home() {
         <CategoryGrid categories={categories} />
         <FeaturedStores shops={featuredShops} />
         <BannerSlot slot="home_middle" className="py-6" />
+        {/* client-side: the page itself is ISR-cached and shared, so the
+            personalised shelf is fetched per visitor in the browser */}
+        <RecommendationRail
+          title="Recommended for you"
+          surface="home"
+          path="/recommendations/home"
+          className="max-w-6xl mx-auto px-6 py-8"
+        />
         <PopularProducts products={products} />
         <WhyChooseUs />
         <Testimonials />

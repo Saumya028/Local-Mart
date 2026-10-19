@@ -1,8 +1,9 @@
 import Link from "next/link";
 import WishlistButton from "@/components/WishlistButton";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
+import { RatingBadge } from "@/components/reviews/StarRating";
 
-export type ProductData = { id: string; name: string; price: string; category: string; images: string[] };
+export type ProductData = { id: string; name: string; price: string; category: string; images: string[]; rating_avg?: number; rating_count?: number };
 
 export function PopularProducts({ products }: { products: ProductData[] }) {
   return (
@@ -38,6 +39,9 @@ export function PopularProducts({ products }: { products: ProductData[] }) {
                 <p className="text-xs text-gray-400">{p.category}</p>
                 <p className="text-sm font-medium text-gray-900 mt-0.5 line-clamp-2">{p.name}</p>
                 <p className="text-sm font-semibold text-gray-900 mt-1.5">₹{p.price}</p>
+                {(p.rating_count ?? 0) > 0 && (
+                  <p className="mt-0.5"><RatingBadge average={p.rating_avg ?? 0} count={p.rating_count ?? 0} /></p>
+                )}
               </Link>
             </div>
           ))}

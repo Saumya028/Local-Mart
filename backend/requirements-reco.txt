@@ -1,0 +1,6 @@
+# Only needed where the NIGHTLY MODEL BUILD runs (scripts/build_recommendations.py)
+# and in tests of it — NOT by the API server, which imports nothing from
+# numpy/scipy (see app/core/recommendations/__init__.py).
+-r requirements.txt
+numpy>=2.0,<3
+scipy>=1.13,<2

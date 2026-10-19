@@ -32,6 +32,7 @@ import WishlistButton from "@/components/WishlistButton";
 import { ProductGallery } from "@/components/ProductGallery";
 import { VariantPicker } from "@/components/VariantPicker";
 import { RatingBadge, StarRating } from "@/components/reviews/StarRating";
+import { RecommendationRail } from "@/components/recommendations/RecommendationRail";
 import { ProductReviewsSection } from "@/components/reviews/ProductReviewsSection";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -148,6 +149,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           )}
         </div>
       </div>
+
+      <RecommendationRail
+        title="Customers also bought"
+        surface="product"
+        path={`/recommendations/product/${product.id}`}
+        className="mt-12 border-t pt-8"
+      />
 
       <div id="reviews" className="mt-12 border-t pt-8 scroll-mt-20">
         <ProductReviewsSection productId={product.id} productName={product.name} shopName={product.shop?.name} />

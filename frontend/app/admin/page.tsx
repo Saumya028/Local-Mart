@@ -10,6 +10,7 @@ import { UsersTab } from "@/components/admin/UsersTab";
 import { BannersTab } from "@/components/admin/BannersTab";
 import { AttributesTab } from "@/components/admin/AttributesTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
+import { RecommendationsTab } from "@/components/admin/RecommendationsTab";
 import { SettingsTab } from "@/components/admin/SettingsTab";
 
 // Tabs whose list the top-bar search box filters (others hide the box).
@@ -27,6 +28,7 @@ const TAB_TITLES: Record<AdminTabKey, string> = {
   users: "Users",
   attributes: "Attributes",
   reports: "Reports",
+  recommendations: "Recommendations",
   settings: "Settings",
 };
 
@@ -104,6 +106,7 @@ export default function AdminPanelPage() {
           {tab === "users" && <UsersTab search={search} selfId={profile?.id ?? null} />}
           {tab === "attributes" && <AttributesTab search={search} />}
           {tab === "reports" && <ReportsTab />}
+          {tab === "recommendations" && <RecommendationsTab />}
           {tab === "settings" && <SettingsTab />}
         </div>
       </div>

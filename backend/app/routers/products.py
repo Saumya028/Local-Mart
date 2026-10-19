@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+
 from app.core.attribute_validation import get_schema_fields
 from app.core.cache import cache_get_or_set
 from app.core.db import get_db
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/products", tags=["products"])
 
 
 @router.get("/{product_id}", response_model=ProductDetailOut)
-async def get_product(product_id: str, response: Response, db: AsyncSession = Depends(get_db)):
+async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
     """
     Backs the Product Detail page. One cached call returns the product,
     its shop's info, AND its variant siblings (if any) together — the
@@ -79,7 +79,6 @@ async def get_product(product_id: str, response: Response, db: AsyncSession = De
     data = await cache_get_or_set(f"product:{product_id}", ttl_seconds=60, loader=load)
     if data is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    response.headers["Cache-Control"] = "public, s-maxage=30, stale-while-revalidate=120"
     return data
 
 

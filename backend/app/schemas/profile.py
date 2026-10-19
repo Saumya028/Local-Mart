@@ -35,6 +35,7 @@ class ProfileOut(BaseModel):
     pan: str | None = None
     # Read-only for the customer: set by an admin/verification step only.
     gst_verified: bool = False
+    personalization_opt_out: bool = False
 
 
 class ProfileUpdate(BaseModel):
@@ -54,6 +55,7 @@ class ProfileUpdate(BaseModel):
     business_name: str | None = None
     gstin: str | None = None
     pan: str | None = None
+    personalization_opt_out: bool | None = None
 
     # `gst_verified` is deliberately absent — see Profile.gst_verified.
 

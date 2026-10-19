@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import SignInPrompt from "@/components/SignInPrompt";
+import { RecommendationRail } from "@/components/recommendations/RecommendationRail";
 
 const CART_ICON = (
   <svg viewBox="0 0 24 24" fill="none" className="w-8 h-8">
@@ -180,6 +181,16 @@ export default function CartPage() {
               Proceed to checkout
             </button>
           </div>
+
+          <RecommendationRail
+            title="Frequently bought together"
+            surface="cart"
+            path="/recommendations/cart"
+            requiresAuth
+            refreshKey={items.map((i) => i.product.id).join(",")}
+            limit={6}
+            className="pt-6 border-t"
+          />
         </>
       )}
     </main>

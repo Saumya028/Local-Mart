@@ -23,6 +23,7 @@ init_sentry()
 from app.routers import (  # noqa: E402
     addresses,
     admin,
+    admin_recommendations,
     attribute_schemas,
     auth,
     banners,
@@ -31,6 +32,7 @@ from app.routers import (  # noqa: E402
     health,
     orders,
     products,
+    recommendations,
     returns,
     reviews,
     shop_dashboard,
@@ -165,6 +167,8 @@ app.include_router(reviews.router)
 app.include_router(sponsorship.router)
 app.include_router(banners.router)
 app.include_router(admin.router)
+app.include_router(admin_recommendations.router)
+app.include_router(recommendations.router)
 
 
 @app.get("/")

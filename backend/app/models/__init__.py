@@ -9,6 +9,12 @@ from app.models.payment import Payment
 from app.models.platform_settings import PlatformSettings
 from app.models.product import Product
 from app.models.profile import Profile
+from app.models.recommendation import (
+    ProductPopularity,
+    ProductSimilarity,
+    RecommendationEvent,
+    RecommendationRun,
+)
 from app.models.return_request import ReturnRequest
 from app.models.review import ProductReview, ShopReview
 from app.models.shop import Shop
@@ -33,6 +39,10 @@ __all__ = [
     "AttributeSchema",
     "ReturnRequest",
     "ProductReview",
+    "RecommendationRun",
+    "ProductSimilarity",
+    "ProductPopularity",
+    "RecommendationEvent",
     "ShopReview",
     "SponsorshipPlan",
     "SponsorshipPurchase",

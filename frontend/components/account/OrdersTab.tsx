@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
+import { RecommendationRail } from "@/components/recommendations/RecommendationRail";
 import { AccountOrder, OrderDetail, formatDate, isFulfilled, orderStatusMeta, paymentBadge } from "./types";
 
 export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: AccountOrder[]) => void }) {
@@ -70,6 +71,13 @@ export function OrdersTab({ onOrdersLoaded }: { onOrdersLoaded?: (orders: Accoun
 
   return (
     <div className="space-y-3">
+      <RecommendationRail
+        title="Buy again"
+        surface="buy_again"
+        path="/recommendations/buy-again"
+        requiresAuth
+        className="bg-white rounded-2xl border border-gray-100 p-5 mb-4"
+      />
       {orders.map((order) => {
         const status = orderStatusMeta(order.status);
         const pay = paymentBadge(order);

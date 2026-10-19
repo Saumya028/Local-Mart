@@ -54,6 +54,9 @@ async def update_me(
     # but customer_type is NOT NULL — ignore an explicit null for it.
     if updates.get("customer_type") is None:
         updates.pop("customer_type", None)
+    # NOT NULL boolean — an explicit null means "no change", not "false".
+    if updates.get("personalization_opt_out") is None:
+        updates.pop("personalization_opt_out", None)
 
     old_gstin = current_user.gstin
     for key, value in updates.items():

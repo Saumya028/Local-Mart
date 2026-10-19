@@ -37,6 +37,22 @@ export default function PrivacyPage() {
       </section>
 
       <section className="space-y-2">
+        <h2 className="text-lg font-semibold text-gray-900">Product recommendations</h2>
+        <p>
+          To suggest products (&ldquo;Customers also bought&rdquo;, &ldquo;Recommended
+          for you&rdquo;, &ldquo;Buy again&rdquo;) we analyze past orders, wishlists and
+          reviews across customers, overnight, on our own servers — nothing is
+          sent to a third party. Pharmacy products are never used to suggest
+          items to other customers. We also record which suggestions are shown
+          and clicked, only to measure whether they are useful; those records
+          are deleted after 90 days. You can switch this off any time under
+          Account &rarr; Settings &rarr; &ldquo;Don&rsquo;t personalize recommendations&rdquo;:
+          your orders are then left out of the analysis and your views and
+          clicks are not recorded.
+        </p>
+      </section>
+
+      <section className="space-y-2">
         <h2 className="text-lg font-semibold text-gray-900">Payments</h2>
         <p>
           Payments go directly from you to the shop, by UPI or cash — we never

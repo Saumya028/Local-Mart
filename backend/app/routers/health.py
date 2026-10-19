@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import text
 
 from app.core.db import engine
@@ -35,3 +35,23 @@ async def health_check():
         status["redis"] = f"error: {e}"
 
     return status
+
+
+@router.get("/health/recommendations")
+async def recommendations_health(response: Response):
+    """
+    For an uptime monitor: 200 while the recommendation model is fresh (or
+    simply not built yet / switched off), 503 once the active model is older
+    than RECO_STALE_HOURS — i.e. the nightly build has been failing or
+    getting rejected for a while. Shelves keep working on the old model
+    meanwhile; this is the nudge to go look.
+    """
+    # imported here so a problem in the admin module can't break /health
+    from app.core.db import AsyncSessionLocal
+    from app.routers.admin_recommendations import health_summary
+
+    async with AsyncSessionLocal() as db:
+        summary = await health_summary(db)
+    if summary.status == "stale":
+        response.status_code = 503
+    return summary

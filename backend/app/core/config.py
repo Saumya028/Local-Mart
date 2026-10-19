@@ -61,7 +61,41 @@ class Settings(BaseSettings):
     # closes the tab before the browser-side confirm call lands.
     razorpay_webhook_secret: str = ""
 
+    # ---- Recommendations (see app/core/recommendations and
+    # backend/docs/recommendations.md) ---------------------------------
+    # Master kill switch: false => every /recommendations endpoint returns
+    # an empty shelf (pages simply hide it) and events are not recorded.
+    reco_enabled: bool = True
+    # % of logged-in users (0-50) deterministically served the plain
+    # "trending" baseline instead of the model — the control group that
+    # lets the admin metrics prove the model actually lifts clicks/orders.
+    reco_holdout_pct: int = 0
+    # A product pair must have been bought by at least this many DISTINCT
+    # customers to be recommended — blocks noise, single-buyer gaming and
+    # leaking one person's purchases through a rare pairing.
+    reco_min_co_buyers: int = 3
+    # Purchases/wishlists lose half their weight every this many days.
+    reco_half_life_days: int = 90
+    # Per-customer cap on items used to build similarities (most recent /
+    # strongest kept) so one heavy buyer can't dominate or blow up the job.
+    reco_max_items_per_user: int = 50
+    reco_neighbors_per_product: int = 30
+    # Comma-separated shop/product categories that never take part in
+    # cross-customer recommendations (health data is sensitive).
+    reco_excluded_categories: str = "Pharmacy"
+    # Raw impression/click rows older than this are deleted by the nightly job.
+    reco_event_retention_days: int = 90
+    # Hours after which /health/recommendations reports the model as stale.
+    reco_stale_hours: int = 36
+    # A new model run is only promoted if its hit-rate is at least
+    # (1 - this) times the previous run's, and not below the popularity baseline.
+    reco_max_regression: float = 0.2
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def reco_excluded_category_list(self) -> list[str]:
+        return [c.strip() for c in self.reco_excluded_categories.split(",") if c.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

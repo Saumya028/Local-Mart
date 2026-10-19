@@ -34,6 +34,26 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [optOut, setOptOut] = useState(profile.personalization_opt_out ?? false);
+  const [optBusy, setOptBusy] = useState(false);
+  const [optError, setOptError] = useState<string | null>(null);
+
+  async function toggleOptOut(next: boolean) {
+    setOptBusy(true);
+    setOptError(null);
+    try {
+      const updated: AccountProfile = await apiFetch("/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify({ personalization_opt_out: next }),
+      });
+      setOptOut(updated.personalization_opt_out ?? next);
+      onUpdated(updated);
+    } catch (err) {
+      setOptError((err as Error).message);
+    } finally {
+      setOptBusy(false);
+    }
+  }
 
   // Accounts created before these fields existed (and phone-only logins)
   // have them empty — nudge once rather than silently showing blanks.
@@ -138,6 +158,27 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
           {saving ? "Saving…" : "Save changes"}
         </button>
       </form>
+
+      <div className="mt-6 pt-5 border-t border-gray-100">
+        <SectionTitle>Privacy</SectionTitle>
+        <label className="flex items-start gap-3 mt-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={optOut}
+            disabled={optBusy}
+            onChange={(e) => toggleOptOut(e.target.checked)}
+            className="mt-1"
+          />
+          <span className="text-sm text-gray-700">
+            Don&apos;t personalize recommendations
+            <span className="block text-xs text-gray-400 mt-0.5">
+              Your orders won&apos;t be used to suggest products to you or to other customers, and we
+              won&apos;t record which suggestions you view. Takes full effect after the next nightly update.
+            </span>
+          </span>
+        </label>
+        {optError && <p className="text-xs text-red-500 mt-1">{optError}</p>}
+      </div>
     </div>
   );
 }

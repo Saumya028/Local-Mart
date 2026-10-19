@@ -70,6 +70,14 @@ class Profile(Base):
         UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # My Account > Settings > "Personalized recommendations". When true the
+    # customer's data is excluded from the recommendation model, they get
+    # no personalized shelves, and none of their impressions/clicks are
+    # recorded. Their own order history ("Buy again") still works.
+    personalization_opt_out: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+
     # ---- Customer details (collected at signup / My Account) ----------
     # All nullable: accounts created before these existed, and phone-only
     # logins, simply don't have them until the customer fills them in.

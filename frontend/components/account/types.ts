@@ -185,6 +185,7 @@ export type AccountProfile = {
   gstin?: string | null;
   pan?: string | null;
   gst_verified?: boolean;
+  personalization_opt_out?: boolean;
 };
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
