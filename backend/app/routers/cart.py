@@ -1,14 +1,16 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
+from app.core.cart import MAX_LINE_QTY
 from app.core.db import get_db
 from app.core.payment_confirmation import platform_enabled_methods
 from app.core.security import get_current_user
+from app.core.utils import parse_uuid_or_404
 from app.models import Product, Profile, Shop
 from app.schemas.product import ProductOut
 
@@ -17,11 +19,15 @@ router = APIRouter(prefix="/cart", tags=["cart"])
 
 class AddToCartRequest(BaseModel):
     product_id: uuid.UUID
-    quantity: int = 1
+    # ge=1: a negative quantity would be HINCRBY'd into the cart and then
+    # sail through checkout's `stock_qty >= qty` guard, adding stock and
+    # producing a negative order total. le: sanity cap per add.
+    quantity: int = Field(default=1, ge=1, le=MAX_LINE_QTY)
 
 
 class SetQuantityRequest(BaseModel):
-    quantity: int
+    # 0 removes the line (see core/cart.set_cart_item); negatives are rejected.
+    quantity: int = Field(ge=0, le=MAX_LINE_QTY)
 
 
 @router.get("")
@@ -112,6 +118,10 @@ async def add_item(
     # exist and is it active" check is enough at add-to-cart time. Stock
     # is re-validated properly, against the real number, at checkout.
     new_qty = await cart_store.add_to_cart(user.id, str(payload.product_id), payload.quantity)
+    if new_qty > MAX_LINE_QTY:
+        # Repeated "add" clicks can push a line past the cap; clamp it.
+        await cart_store.set_cart_item(user.id, str(payload.product_id), MAX_LINE_QTY)
+        new_qty = MAX_LINE_QTY
     return {"product_id": str(payload.product_id), "quantity": new_qty}
 
 
@@ -121,8 +131,9 @@ async def set_item_quantity(
     payload: SetQuantityRequest,
     user: Profile = Depends(get_current_user),
 ):
-    await cart_store.set_cart_item(user.id, product_id, payload.quantity)
-    return {"product_id": product_id, "quantity": max(payload.quantity, 0)}
+    pid = parse_uuid_or_404(product_id, "Product")
+    await cart_store.set_cart_item(user.id, str(pid), payload.quantity)
+    return {"product_id": str(pid), "quantity": payload.quantity}
 
 
 @router.delete("/items/{product_id}")

@@ -1,5 +1,8 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 /**
  * app/error.tsx (the normal error boundary) is rendered INSIDE
  * layout.tsx — so if layout.tsx itself throws (e.g. AuthProvider's
@@ -10,11 +13,16 @@
  * failed.
  */
 export default function GlobalError({
+  error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <html lang="en">
       <body className="bg-white text-gray-900">

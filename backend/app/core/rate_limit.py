@@ -3,6 +3,7 @@ import logging
 import redis.exceptions
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.client_ip import client_ip
 from app.core.redis_client import redis_client
 from app.core.security import get_current_user
 from app.models import Profile
@@ -50,22 +51,14 @@ def rate_limit_by_ip(action: str, limit: int, window_seconds: int):
     For endpoints reached without (or before) a verified identity —
     keyed by client IP.
 
-    Reads `request.client.host`, which is whatever Uvicorn sees directly.
-    Behind a reverse proxy or load balancer (Vercel, Railway, an nginx
-    box — anything Phase 8 puts in front of this app), that's the
-    proxy's own IP, not the real client's — the real value would come
-    from an `X-Forwarded-For` header set by the proxy itself. We
-    deliberately do NOT read that header here: it's a plain client-
-    supplied header unless the proxy is configured to overwrite it, and
-    trusting it blindly would let anyone bypass this limiter by just
-    sending a fake one. Wiring this up correctly means configuring
-    trusted-proxy handling (e.g. Uvicorn's `--forwarded-allow-ips`) at
-    deploy time, not guessing at it here.
+    The IP comes from core/client_ip.py, which only trusts
+    `X-Forwarded-For` entries added by OUR proxies (TRUSTED_PROXY_COUNT).
+    Set that env var on your host (1 on Railway/Render/Fly/Heroku);
+    left at 0, behind a proxy, everyone shares the proxy's single IP.
     """
 
     async def checker(request: Request) -> None:
-        ip = request.client.host if request.client else "unknown"
-        await _check_and_increment(f"ratelimit:{action}:ip:{ip}", limit, window_seconds)
+        await _check_and_increment(f"ratelimit:{action}:ip:{client_ip(request)}", limit, window_seconds)
 
     return checker
 

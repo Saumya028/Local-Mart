@@ -91,6 +91,22 @@ class Settings(BaseSettings):
     # (1 - this) times the previous run's, and not below the popularity baseline.
     reco_max_regression: float = 0.2
 
+    # ---- Order expiry (see app/core/order_expiry.py) -----------------------
+    # Stock is reserved the moment an order is placed. Without expiry an
+    # order nobody pays for or acts on would hold that stock forever.
+    # A UPI order still "unpaid" (customer never even tapped "I've paid")
+    # this many minutes after being placed is cancelled and its stock freed.
+    order_unpaid_upi_expiry_minutes: int = 120
+    # Any order the shop never started on (still "confirmed") after this
+    # many hours is cancelled, unless a payment was reported/received.
+    order_unacted_expiry_hours: int = 24
+
+    # ---- Proxy handling (see app/core/client_ip.py) ------------------------
+    # How many reverse proxies / load balancers sit in front of this app and
+    # append to X-Forwarded-For (Railway/Render/Fly/Heroku: 1; direct: 0).
+    # 0 means "trust nothing, use the socket's peer address".
+    trusted_proxy_count: int = 0
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

@@ -5,13 +5,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.attribute_validation import get_schema_fields
 from app.core.cache import cache_get_or_set
 from app.core.db import get_db
-from app.core.utils import parse_uuid_or_404
+from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
 from app.models import PlatformSettings, Product, Shop
 from app.schemas.product import ProductDetailOut, ProductOut, ProductSearchOut, VariantSummary
 from app.routers.shops import DEFAULT_RADIUS_KM, _distance_expr
 from app.schemas.shop import ShopOut
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+# word_similarity() score (0-1) above which a product name counts as a
+# typo-tolerant match for the query. 0.4 catches 1-2 character typos on
+# normal words without matching unrelated names.
+FUZZY_THRESHOLD = 0.4
 
 
 @router.get("/{product_id}", response_model=ProductDetailOut)
@@ -84,7 +89,9 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("", response_model=list[ProductSearchOut])
 async def search_products(
-    q: str | None = Query(default=None, description="Matched against product name/description"),
+    q: str | None = Query(
+        default=None, max_length=100, description="Matched against product name/description (typo-tolerant)"
+    ),
     category: str | None = Query(default=None),
     shop_id: str | None = Query(default=None, description="Restrict results to one shop's storefront"),
     lat: float | None = Query(default=None, description="Customer's latitude — limits results to nearby shops"),
@@ -92,7 +99,8 @@ async def search_products(
     radius_km: float | None = Query(
         default=None, gt=0, description="Defaults to the platform's max delivery radius setting"
     ),
-    limit: int = Query(default=24, le=100),
+    limit: int = Query(default=24, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10_000, description="Skip this many results (pagination)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -120,9 +128,15 @@ async def search_products(
     closes a gap where products of pending/rejected shops could surface
     in search results).
 
-    Plain ILIKE matching is fine for a few thousand products; move to
-    Postgres full-text search (tsvector + GIN) before reaching for a
-    dedicated search engine.
+    TEXT MATCHING: the search text is escaped (so "50%" or "_" match
+    literally instead of acting as wildcards) and matched as a substring of
+    the name/description, PLUS typo-tolerant matching on the name via
+    pg_trgm's word_similarity (migration 0023) — "paracetmol" still finds
+    "Paracetamol". Substring name matches rank first, then typo matches,
+    then description-only matches.
+
+    PAGINATION: `limit` + `offset`. Ordering is deterministic (ties are
+    broken by product id) so pages never overlap or skip rows.
     """
     sponsored = case((Shop.sponsored_until > func.now(), 1), else_=0)
 
@@ -165,13 +179,27 @@ async def search_products(
         case((Product.stock_qty > 0, 0), else_=1),
         sponsored.desc(),
     ]
+    q = q.strip() if q else None
     if q:
-        pattern = f"%{q}%"
-        stmt = stmt.where(Product.name.ilike(pattern) | Product.description.ilike(pattern))
-        order.append(case((Product.name.ilike(pattern), 0), else_=1))
-    order += [distance.asc() if use_location else Shop.rating.desc(), Product.created_at.desc()]
+        pattern = f"%{escape_like(q)}%"
+        name_match = Product.name.ilike(pattern, escape=LIKE_ESCAPE_CHAR)
+        text_match = name_match | Product.description.ilike(pattern, escape=LIKE_ESCAPE_CHAR)
+        # Typo tolerance only for queries with enough LETTERS to have trigrams
+        # worth comparing: short or numeric queries ("50%", "5") would
+        # otherwise fuzzy-match unrelated names ("500mg").
+        fuzzy_eligible = len(q) >= 4 and sum(ch.isalpha() for ch in q) >= 3
+        fuzzy_name = func.word_similarity(q, Product.name) > FUZZY_THRESHOLD if fuzzy_eligible else None
+        stmt = stmt.where(text_match | fuzzy_name if fuzzy_name is not None else text_match)
+        order.append(
+            case((name_match, 0), (fuzzy_name, 1), else_=2) if fuzzy_name is not None else case((name_match, 0), else_=2)
+        )
+    order += [
+        distance.asc() if use_location else Shop.rating.desc(),
+        Product.created_at.desc(),
+        Product.id,  # tie-breaker: stable pagination
+    ]
 
-    result = await db.execute(stmt.order_by(*order).limit(limit))
+    result = await db.execute(stmt.order_by(*order).limit(limit).offset(offset))
     out = []
     for row in result.all():
         item = ProductSearchOut.model_validate(row[0])

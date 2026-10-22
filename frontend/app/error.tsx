@@ -1,5 +1,7 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+
 import { useEffect } from "react";
 
 /**
@@ -21,10 +23,9 @@ export default function ErrorBoundary({
   reset: () => void;
 }) {
   useEffect(() => {
-    // Sentry, if configured (see sentry.client.config.ts), automatically
-    // captures this via its React error-boundary integration — logging
-    // here as well keeps a plain console record even when Sentry isn't
-    // set up, e.g. in local dev.
+    // Report to Sentry (a no-op unless NEXT_PUBLIC_SENTRY_DSN is set — see
+    // instrumentation-client.ts) and keep a plain console record for local dev.
+    Sentry.captureException(error);
     console.error("Unhandled error in route:", error);
   }, [error]);
 

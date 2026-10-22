@@ -17,9 +17,20 @@ type Product = {
   distance_km?: number | null;
 };
 
-async function searchProducts(q?: string, category?: string, lat?: string, lng?: string): Promise<Product[]> {
+const PAGE_SIZE = 24;
+
+async function searchProducts(
+  q?: string,
+  category?: string,
+  lat?: string,
+  lng?: string,
+  page = 1,
+): Promise<{ products: Product[]; hasMore: boolean }> {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const params = new URLSearchParams();
+  // Ask for one extra row: if it comes back, there is a next page.
+  params.set("limit", String(PAGE_SIZE + 1));
+  params.set("offset", String((page - 1) * PAGE_SIZE));
   if (q) params.set("q", q);
   if (category) params.set("category", category);
   if (lat && lng) {
@@ -32,9 +43,10 @@ async function searchProducts(q?: string, category?: string, lat?: string, lng?:
     // never a stale cached page — unlike the Landing page's categories.
     const res = await fetch(`${apiUrl}/products?${params.toString()}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`API responded ${res.status}`);
-    return res.json();
+    const rows: Product[] = await res.json();
+    return { products: rows.slice(0, PAGE_SIZE), hasMore: rows.length > PAGE_SIZE };
   } catch {
-    return [];
+    return { products: [], hasMore: false };
   }
 }
 
@@ -42,10 +54,29 @@ export default async function SearchPage({
   searchParams: searchParamsPromise,
 }: {
   // In Next.js 15+ searchParams is a Promise and must be awaited.
-  searchParams: Promise<{ q?: string; category?: string; lat?: string; lng?: string }>;
+  searchParams: Promise<{ q?: string; category?: string; lat?: string; lng?: string; page?: string }>;
 }) {
   const searchParams = await searchParamsPromise;
-  const products = await searchProducts(searchParams.q, searchParams.category, searchParams.lat, searchParams.lng);
+  const page = Math.min(Math.max(parseInt(searchParams.page ?? "1", 10) || 1, 1), 400);
+  const { products, hasMore } = await searchProducts(
+    searchParams.q,
+    searchParams.category,
+    searchParams.lat,
+    searchParams.lng,
+    page,
+  );
+  const pageHref = (n: number) => {
+    const qs = new URLSearchParams();
+    if (searchParams.q) qs.set("q", searchParams.q);
+    if (searchParams.category) qs.set("category", searchParams.category);
+    if (searchParams.lat && searchParams.lng) {
+      qs.set("lat", searchParams.lat);
+      qs.set("lng", searchParams.lng);
+    }
+    if (n > 1) qs.set("page", String(n));
+    const str = qs.toString();
+    return str ? `/search?${str}` : "/search";
+  };
   const nearMeActive = Boolean(searchParams.lat && searchParams.lng);
 
   const heading = searchParams.category
@@ -125,6 +156,22 @@ export default async function SearchPage({
             </Link>
           ))}
         </div>
+      )}
+
+      {(page > 1 || hasMore) && (
+        <nav className="flex items-center justify-between pt-2 text-sm" aria-label="Pagination">
+          {page > 1 ? (
+            <Link href={pageHref(page - 1)} className="text-blue-600 hover:underline">← Previous</Link>
+          ) : (
+            <span />
+          )}
+          <span className="text-gray-400">Page {page}</span>
+          {hasMore ? (
+            <Link href={pageHref(page + 1)} className="text-blue-600 hover:underline">Next →</Link>
+          ) : (
+            <span />
+          )}
+        </nav>
       )}
     </main>
   );

@@ -14,6 +14,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
+from app.core.client_ip import client_ip
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.rate_limit import _check_and_increment
@@ -159,7 +160,7 @@ async def record_events(
     if user is not None and user.personalization_opt_out:
         return RecoEventsResponse(recorded=0)
 
-    who = f"user:{user.id}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
+    who = f"user:{user.id}" if user else f"ip:{client_ip(request)}"
     await _check_and_increment(f"ratelimit:reco_events:{who}", EVENTS_PER_MINUTE, 60)
 
     valid = [

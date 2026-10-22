@@ -1034,7 +1034,6 @@ async def update_settings(
         raise HTTPException(status_code=404, detail="Platform settings not initialized")
 
     updates = payload.model_dump(exclude_unset=True)
-    gateways_changed = "payment_gateways" in updates
     for field, value in updates.items():
         if field == "payment_gateways":
             setattr(settings_row, field, [g.model_dump() if hasattr(g, "model_dump") else g for g in value])

@@ -6,6 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
+from app.core.cart import MAX_LINE_QTY
 from app.core.db import get_db
 from app.core.idempotency import idempotent
 from app.core.order_status import CUSTOMER_CANCELABLE_FROM
@@ -122,6 +123,16 @@ async def checkout(
         raw_items = await cart_store.get_cart_items(user.id)
         if not raw_items:
             raise HTTPException(status_code=400, detail="Cart is empty")
+
+        # Cart quantities come from Redis, so never trust them: a zero or
+        # negative quantity would bypass the stock guard below (and create a
+        # negative line total), and an absurd one is never a real order.
+        for product_id, qty in raw_items.items():
+            if qty < 1 or qty > MAX_LINE_QTY:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Your cart has an invalid quantity. Please review your cart and try again.",
+                )
 
         product_ids = [uuid.UUID(pid) for pid in raw_items.keys()]
         result = await db.execute(select(Product).where(Product.id.in_(product_ids)))

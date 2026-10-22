@@ -8,7 +8,7 @@ from app.core.attribute_validation import validate_attributes
 from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
 from app.core.security import get_current_user
-from app.core.utils import parse_uuid_or_404
+from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
 from app.models import PlatformSettings, Profile, Shop
 from app.schemas.shop import ShopCreate, ShopOut
 
@@ -49,13 +49,16 @@ def _sponsored_rank():
 @router.get("", response_model=list[ShopOut])
 async def list_shops(
     category: str | None = Query(default=None),
-    q: str | None = Query(default=None, description="Case-insensitive substring match on shop name"),
+    q: str | None = Query(
+        default=None, max_length=100, description="Case-insensitive substring match on shop name"
+    ),
     lat: float | None = Query(default=None, description="Customer's latitude — filters shops by radius_km"),
     lng: float | None = Query(default=None, description="Customer's longitude — used together with lat"),
     radius_km: float | None = Query(
         default=None, gt=0, description="Defaults to the platform's max delivery radius setting"
     ),
-    limit: int = Query(default=50, le=100),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10_000, description="Skip this many shops (pagination)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -74,7 +77,7 @@ async def list_shops(
     # public catalog — a brand-new, still-pending application is invisible
     # here even though its is_active default is fine, exactly like a
     # rejected/deactivated shop is.
-    if category is None and q is None and lat is None and lng is None and limit == 50:
+    if category is None and q is None and lat is None and lng is None and limit == 50 and offset == 0:
         async def load():
             result = await db.execute(
                 select(Shop)
@@ -110,8 +113,8 @@ async def list_shops(
         if category is not None:
             stmt = stmt.where(Shop.category == category)
         if q:
-            stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
-        stmt = stmt.order_by(_sponsored_rank().desc(), distance.asc()).limit(limit)
+            stmt = stmt.where(Shop.name.ilike(f"%{escape_like(q)}%", escape=LIKE_ESCAPE_CHAR))
+        stmt = stmt.order_by(_sponsored_rank().desc(), distance.asc(), Shop.id).limit(limit).offset(offset)
 
         result = await db.execute(stmt)
         out = []
@@ -125,8 +128,8 @@ async def list_shops(
     if category is not None:
         stmt = stmt.where(Shop.category == category)
     if q:
-        stmt = stmt.where(Shop.name.ilike(f"%{q}%"))
-    stmt = stmt.order_by(_sponsored_rank().desc(), Shop.rating.desc()).limit(limit)
+        stmt = stmt.where(Shop.name.ilike(f"%{escape_like(q)}%", escape=LIKE_ESCAPE_CHAR))
+    stmt = stmt.order_by(_sponsored_rank().desc(), Shop.rating.desc(), Shop.id).limit(limit).offset(offset)
 
     result = await db.execute(stmt)
     return result.scalars().all()

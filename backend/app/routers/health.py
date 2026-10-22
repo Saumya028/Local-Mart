@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Response
 from sqlalchemy import text
 
 from app.core.db import engine
 from app.core.redis_client import redis_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -24,15 +28,20 @@ async def health_check():
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         status["database"] = "ok"
-    except Exception as e:
-        status["database"] = f"error: {e}"
+    except Exception:
+        # Never echo the exception to the caller: DB/Redis errors can
+        # contain hostnames, usernames or connection-string fragments.
+        # /health is public; the detail goes to the (private) logs instead.
+        logger.exception("health check: database unreachable")
+        status["database"] = "error"
 
     # Check Redis: PING is the standard connectivity check.
     try:
         pong = await redis_client.ping()
-        status["redis"] = "ok" if pong else "error: no pong"
-    except Exception as e:
-        status["redis"] = f"error: {e}"
+        status["redis"] = "ok" if pong else "error"
+    except Exception:
+        logger.exception("health check: redis unreachable")
+        status["redis"] = "error"
 
     return status
 

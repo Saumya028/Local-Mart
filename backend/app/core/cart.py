@@ -3,6 +3,12 @@ import uuid
 from app.core.redis_client import redis_client
 
 
+# Hard ceiling for one cart line. Enforced at the API boundary (routers/cart.py)
+# and again at checkout, because cart contents live in Redis and anything
+# already stored there (e.g. from before this limit existed) is untrusted.
+MAX_LINE_QTY = 99
+
+
 def _cart_key(user_id: uuid.UUID) -> str:
     return f"cart:{user_id}"
 
