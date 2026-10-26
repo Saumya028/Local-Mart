@@ -24,12 +24,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import invalidate
 from app.core.config import settings
+from app.core.order_events import order_changed
 from app.core.payment_confirmation import cancel_order_and_release_stock
 from app.models import Order, OrderItem, Payment
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 200
+
+
+def _duration(minutes: int) -> str:
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{minutes} minutes"
 
 
 async def expire_stale_orders(db: AsyncSession, now: datetime | None = None) -> list[str]:
@@ -43,7 +51,7 @@ async def expire_stale_orders(db: AsyncSession, now: datetime | None = None) -> 
     # now (or a second sweeper is running), skip it this round rather than
     # block or double-process it.
     stmt = (
-        select(Order)
+        select(Order, Payment.method)
         .join(Payment, Payment.order_id == Order.id)
         .where(
             Order.status == "confirmed",
@@ -57,13 +65,22 @@ async def expire_stale_orders(db: AsyncSession, now: datetime | None = None) -> 
         .limit(BATCH_SIZE)
         .with_for_update(skip_locked=True)
     )
-    orders = (await db.execute(stmt)).scalars().all()
-    if not orders:
+    rows = (await db.execute(stmt)).all()
+    if not rows:
         return []
 
-    order_ids = [o.id for o in orders]
-    for order in orders:
+    order_ids = [order.id for order, _ in rows]
+    for order, method in rows:
+        if method == "upi" and order.created_at < upi_cutoff:
+            minutes = settings.order_unpaid_upi_expiry_minutes
+            reason = f"It wasn’t paid within {_duration(minutes)}."
+        else:
+            reason = f"The shop didn’t start on it within {_duration(settings.order_unacted_expiry_hours * 60)}."
         await cancel_order_and_release_stock(db, order)
+        await order_changed(
+            db, order, "order_cancelled", actor=None,
+            from_status="confirmed", to_status="cancelled", note=f"Cancelled automatically. {reason}",
+        )
     product_ids = (
         await db.execute(select(OrderItem.product_id).where(OrderItem.order_id.in_(order_ids)).distinct())
     ).scalars().all()

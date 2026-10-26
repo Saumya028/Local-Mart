@@ -3,6 +3,7 @@ from app.models.attribute_schema import AttributeSchema
 from app.models.audit_log import AuditLog
 from app.models.banner import Banner, BannerPayment, BannerSlot
 from app.models.base import Base
+from app.models.notification import Notification, NotificationOutbox, OrderEvent
 from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.payment import Payment
@@ -33,6 +34,9 @@ __all__ = [
     "Order",
     "OrderItem",
     "Payment",
+    "OrderEvent",
+    "Notification",
+    "NotificationOutbox",
     "AuditLog",
     "PlatformSettings",
     "WishlistItem",

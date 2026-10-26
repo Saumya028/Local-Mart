@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from fastapi.encoders import jsonable_encoder
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from app.core.cache import invalidate
 from app.core.db import get_db
 from app.core.order_status import RECOGNIZED_STATUSES as RECOGNIZED_ORDER_STATUSES
 from app.core.security import require_role
+from app.core.order_timeline import load_timeline
 from app.core.utils import parse_uuid_or_404
 from app.models import (
     Address,
@@ -1181,3 +1183,16 @@ async def delete_attribute_schema(
     await db.commit()
     await invalidate(f"attribute-schema:{kind}:{category}")
     return {"status": "deleted"}
+
+
+@router.get("/orders/{order_id}/timeline")
+async def admin_order_timeline(
+    order_id: str,
+    admin: Profile = Depends(RequireAdmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispute resolution: the complete, unfiltered history of any order."""
+    oid = parse_uuid_or_404(order_id, "Order")
+    if (await db.execute(select(Order.id).where(Order.id == oid))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return jsonable_encoder(await load_timeline(db, oid, for_customer=False))

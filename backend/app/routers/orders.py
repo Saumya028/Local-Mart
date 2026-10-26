@@ -9,6 +9,8 @@ from app.core import cart as cart_store
 from app.core.cart import MAX_LINE_QTY
 from app.core.db import get_db
 from app.core.idempotency import idempotent
+from app.core.order_events import order_changed
+from app.core.order_timeline import load_timeline
 from app.core.order_status import CUSTOMER_CANCELABLE_FROM
 from app.core.payment_confirmation import (
     cancel_order_and_release_stock,
@@ -42,6 +44,7 @@ from app.schemas.order import (
     PaymentInfo,
 )
 from app.schemas.shop import ShopOut
+from app.schemas.notification import OrderEventOut
 
 router = APIRouter(tags=["orders"])
 
@@ -264,6 +267,16 @@ async def checkout(
                 )
             )
 
+        await db.flush()  # payments must be visible to the notification templates
+        for order in created_orders:
+            await order_changed(
+                db, order, "order_placed", actor=user, actor_role="customer", to_status="confirmed",
+                meta={
+                    "payment_method": payment_method_by_shop[order.shop_id],
+                    "fulfillment_type": order.fulfillment_type,
+                },
+            )
+
         await db.commit()
         await cart_store.clear_cart(user.id)
 
@@ -412,6 +425,19 @@ async def get_order(
     return await _build_order_detail(db, order)
 
 
+@router.get("/orders/{order_id}/timeline", response_model=list[OrderEventOut])
+async def order_timeline(
+    order_id: str,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Everything that has happened to this order, oldest first — the
+    customer's own record (who did what, when, including delivery proof).
+    Staff names/emails are never shown here, only "The shop"."""
+    order = await _load_owned_order(db, order_id, user)
+    return await load_timeline(db, order.id, for_customer=True)
+
+
 @router.post("/orders/{order_id}/payment/mark-paid", response_model=OrderDetailOut)
 async def mark_order_paid(
     order_id: str,
@@ -440,7 +466,12 @@ async def mark_order_paid(
             status_code=400,
             detail="The transaction/UTR number should be 8-30 letters or digits",
         )
+    before = (payment.status, payment.payer_reference)
     mark_submitted(payment, ref or None)
+    if (payment.status, payment.payer_reference) != before:
+        await order_changed(
+            db, order, "payment_submitted", actor=user, actor_role="customer", meta={"utr": ref} if ref else None
+        )
     await db.commit()
     return await _build_order_detail(db, order)
 
@@ -472,10 +503,15 @@ async def change_payment_method(
     if payload.method == "cash" and not shop.accepts_cash:
         raise HTTPException(status_code=400, detail="This shop doesn't currently accept cash")
 
+    old_method = payment.method
     payment.method = payload.method
     payment.status = "unpaid"
     payment.payer_reference = None
     payment.marked_paid_at = None
+    await order_changed(
+        db, order, "payment_method_changed", actor=user, actor_role="customer",
+        meta={"from_method": old_method, "to_method": payload.method},
+    )
     await db.commit()
     return await _build_order_detail(db, order)
 
@@ -504,6 +540,11 @@ async def cancel_order(
             status_code=400,
             detail="This order has a payment on record — please contact the shop to cancel",
         )
+    previous_status = order.status
     await cancel_order_and_release_stock(db, order)
+    await order_changed(
+        db, order, "order_cancelled", actor=user, actor_role="customer",
+        from_status=previous_status, to_status="cancelled",
+    )
     await db.commit()
     return await _build_order_detail(db, order)

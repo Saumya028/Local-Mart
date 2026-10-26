@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
 from app.core.db import get_db
+from app.core.order_events import order_changed
+from app.core.order_timeline import load_timeline
 from app.core.order_status import (
     DELIVERY_PROOF_REQUIRED_STATUSES,
     RECOGNIZED_STATUSES,
@@ -23,6 +25,7 @@ from app.core.payment_confirmation import (
     reject_submission,
 )
 from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
+from app.core.return_events import return_changed
 from app.core.security import require_role
 from app.core.supabase_admin import (
     create_supabase_user,
@@ -39,6 +42,7 @@ from app.schemas.dashboard import (
     TopProductOut,
 )
 from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
+from app.schemas.notification import OrderEventOut
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
@@ -506,6 +510,7 @@ async def update_order_status(
             detail="A photo of the delivered order is required to mark it as delivered.",
         )
 
+    previous_status = order.status
     order.status = payload.status
     if payload.delivery_proof_photo_url:
         order.delivery_proof_photo_url = payload.delivery_proof_photo_url
@@ -521,11 +526,36 @@ async def update_order_status(
         # the moment the shop received it. (A UPI order is only ever
         # marked paid by the shop's explicit confirmation below.)
         payment = await get_payment(db, order.id)
+        cash_just_collected = payment is not None and payment.method == "cash" and payment.status != "paid"
         if payment is not None and payment.method == "cash":
             mark_paid(payment)
+    else:
+        cash_just_collected = False
+
+    await order_changed(
+        db, order, "status_changed", actor=user, from_status=previous_status, to_status=payload.status,
+        meta={"delivery_proof_photo_url": payload.delivery_proof_photo_url} if payload.delivery_proof_photo_url else None,
+    )
+    if cash_just_collected:
+        await order_changed(
+            db, order, "payment_confirmed", actor=user,
+            note="Cash collected at hand-over", meta={"auto": "cash_on_handover"},
+        )
     await db.commit()
 
     return await _order_response(db, order)
+
+
+@router.get("/orders/{order_id}/timeline", response_model=list[OrderEventOut])
+async def order_timeline_for_shop(
+    order_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full history of an order for the shop team, with WHO (name/email and
+    role) did each step — the shop's evidence in a dispute."""
+    order = await _load_manageable_order(order_id, user, db)
+    return await load_timeline(db, order.id, for_customer=False)
 
 
 @router.post("/orders/{order_id}/payment/confirm", response_model=DashboardOrderOut)
@@ -542,7 +572,10 @@ async def confirm_order_payment(
         raise HTTPException(status_code=400, detail="This order has no payment record")
     if order.status == "cancelled":
         raise HTTPException(status_code=400, detail="This order was cancelled")
+    was_paid = payment.status == "paid"
     mark_paid(payment)
+    if not was_paid:
+        await order_changed(db, order, "payment_confirmed", actor=user, meta={"payment_method": payment.method})
     await db.commit()
     return await _order_response(db, order)
 
@@ -560,7 +593,11 @@ async def reject_order_payment(
     payment = await get_payment(db, order.id)
     if payment is None or payment.status != "submitted":
         raise HTTPException(status_code=400, detail="There's no pending payment claim to reject")
+    rejected_reference = payment.payer_reference
     reject_submission(payment)
+    await order_changed(
+        db, order, "payment_rejected", actor=user, meta={"utr": rejected_reference} if rejected_reference else None
+    )
     await db.commit()
     return await _order_response(db, order)
 
@@ -578,7 +615,9 @@ async def cancel_order_as_shop(
     order = await _load_manageable_order(order_id, user, db)
     if order.status not in SHOP_CANCELABLE_FROM:
         raise HTTPException(status_code=400, detail="This order can no longer be cancelled")
+    previous_status = order.status
     await cancel_order_and_release_stock(db, order)
+    await order_changed(db, order, "order_cancelled", actor=user, from_status=previous_status, to_status="cancelled")
     await db.commit()
     return await _order_response(db, order)
 
@@ -892,6 +931,7 @@ async def confirm_difference_paid(
     rr.difference_paid = True
     if rr.difference_method is None:
         rr.difference_method = "cash"
+    await return_changed(db, rr, "difference_confirmed", actor=user)
     await db.commit()
     await db.refresh(rr)
     return ReturnRequestOut.model_validate(rr).model_dump(mode="json")
@@ -1042,6 +1082,14 @@ async def update_return_status(
         rr.shop_note = payload.shop_note
     if payload.status in ("rejected", "completed"):
         rr.resolved_at = datetime.now(timezone.utc)
+
+    await return_changed(db, rr, f"return_{payload.status}", actor=user, note=payload.shop_note)
+    if new_order is not None:
+        await order_changed(
+            db, new_order, "order_placed", actor=user, to_status="confirmed",
+            note="Replacement order created for an exchange",
+            meta={"source": "exchange", "return_id": str(rr.id)},
+        )
 
     await db.commit()
     await db.refresh(rr)

@@ -37,6 +37,26 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
   const [optOut, setOptOut] = useState(profile.personalization_opt_out ?? false);
   const [optBusy, setOptBusy] = useState(false);
   const [optError, setOptError] = useState<string | null>(null);
+  const [emailOn, setEmailOn] = useState(profile.email_notifications ?? true);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  async function toggleEmail(next: boolean) {
+    setEmailBusy(true);
+    setEmailError(null);
+    try {
+      const updated: AccountProfile = await apiFetch("/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify({ email_notifications: next }),
+      });
+      setEmailOn(updated.email_notifications ?? next);
+      onUpdated(updated);
+    } catch (err) {
+      setEmailError((err as Error).message);
+    } finally {
+      setEmailBusy(false);
+    }
+  }
 
   async function toggleOptOut(next: boolean) {
     setOptBusy(true);
@@ -158,6 +178,27 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
           {saving ? "Saving…" : "Save changes"}
         </button>
       </form>
+
+      <div className="mt-6 pt-5 border-t border-gray-100">
+        <SectionTitle>Notifications</SectionTitle>
+        <label className="flex items-start gap-3 mt-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={emailOn}
+            disabled={emailBusy || !profile.email}
+            onChange={(e) => toggleEmail(e.target.checked)}
+            className="mt-1"
+          />
+          <span className="text-sm text-gray-700">
+            Email me about my orders
+            <span className="block text-xs text-gray-400 mt-0.5">
+              Order updates, payment and return messages are always shown under the bell icon; this also sends a copy
+              to {profile.email ?? "your email address (add one to enable this)"}.
+            </span>
+          </span>
+        </label>
+        {emailError && <p className="text-xs text-red-500 mt-1">{emailError}</p>}
+      </div>
 
       <div className="mt-6 pt-5 border-t border-gray-100">
         <SectionTitle>Privacy</SectionTitle>

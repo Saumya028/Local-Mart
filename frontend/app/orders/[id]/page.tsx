@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
 import UpiPayPanel from "@/components/payment/UpiPayPanel";
+import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
 import { ReviewFormModal } from "@/components/reviews/ReviewFormModal";
 import { MyReview, ReviewEligibility, ReviewKind, reviewsPath } from "@/components/reviews/types";
 import {
@@ -38,6 +39,7 @@ export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
+  const [timeline, setTimeline] = useState<OrderEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<OrderDetailItem | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
@@ -61,6 +63,14 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function loadTimeline() {
+    try {
+      setTimeline(await apiFetch(`/orders/${params.id}/timeline`));
+    } catch {
+      // Non-fatal — the order still renders without its history.
+    }
+  }
+
   async function loadReturns() {
     try {
       const data = await apiFetch(`/orders/${params.id}/returns`);
@@ -73,8 +83,16 @@ export default function OrderDetailPage() {
   useEffect(() => {
     load();
     loadReturns();
+    loadTimeline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
+
+  // Whenever the order itself changes (a status step, a payment, a poll),
+  // its history may have grown too.
+  useEffect(() => {
+    if (order) loadTimeline();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.status, order?.payment_status]);
 
   // While the customer is waiting on the shop to confirm a UPI payment,
   // quietly re-check every 15s so the page flips to "Paid" on its own.
@@ -369,6 +387,13 @@ export default function OrderDetailPage() {
           </>
         )}
       </div>
+
+      <section aria-labelledby="order-history-heading" className="pt-2">
+        <h2 id="order-history-heading" className="text-sm font-semibold text-gray-900 mb-3">
+          Order history
+        </h2>
+        <OrderTimeline events={timeline} />
+      </section>
 
       {reviewTarget && (
         <ReviewFormModal

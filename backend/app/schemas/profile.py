@@ -36,6 +36,7 @@ class ProfileOut(BaseModel):
     # Read-only for the customer: set by an admin/verification step only.
     gst_verified: bool = False
     personalization_opt_out: bool = False
+    email_notifications: bool = True
 
 
 class ProfileUpdate(BaseModel):
@@ -56,6 +57,7 @@ class ProfileUpdate(BaseModel):
     gstin: str | None = None
     pan: str | None = None
     personalization_opt_out: bool | None = None
+    email_notifications: bool | None = None
 
     # `gst_verified` is deliberately absent — see Profile.gst_verified.
 

@@ -107,6 +107,27 @@ class Settings(BaseSettings):
     # 0 means "trust nothing, use the socket's peer address".
     trusted_proxy_count: int = 0
 
+    # ---- Notifications (see app/core/notifications.py) ---------------------
+    # How outgoing email is delivered:
+    #   "console" - just log it (default; safe for dev/CI, sends nothing)
+    #   "resend"  - Resend's HTTP API (set RESEND_API_KEY)
+    #   "smtp"    - any SMTP server: Brevo, Amazon SES, Gmail app password...
+    email_provider: str = "console"
+    # Must be an address/domain verified with your provider.
+    email_from: str = "LocalMart <notifications@localmart.example>"
+    resend_api_key: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True  # STARTTLS on port 587; set False for implicit-TLS port 465
+    # The API process runs a small background loop that delivers queued
+    # emails every few seconds. Turn off if you run
+    # `python -m scripts.send_notifications --loop` as a separate worker.
+    notification_worker_enabled: bool = True
+    notification_worker_interval_seconds: int = 10
+    notification_max_attempts: int = 5
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

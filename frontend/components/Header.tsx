@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import AuthStatus from "./AuthStatus";
+import { NotificationBell } from "./notifications/NotificationBell";
 import { useAuth } from "@/contexts/AuthContext";
 
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/reset-password"];
@@ -95,15 +96,18 @@ export default function Header() {
               {link.label}
             </Link>
           ))}
+          <NotificationBell />
           <AuthStatus />
         </nav>
 
+        <div className="md:hidden flex items-center gap-2">
+        <NotificationBell />
         <button
           type="button"
           aria-label={mobileOpen ? "Close menu" : "Open menu"}
           aria-expanded={mobileOpen}
           onClick={() => setMobileOpen((open) => !open)}
-          className="md:hidden text-gray-600 hover:text-gray-900 p-1"
+          className="text-gray-600 hover:text-gray-900 p-1"
         >
           <svg viewBox="0 0 20 20" fill="none" className="w-6 h-6">
             {mobileOpen ? (
@@ -113,6 +117,7 @@ export default function Header() {
             )}
           </svg>
         </button>
+        </div>
       </div>
 
       {mobileOpen && (

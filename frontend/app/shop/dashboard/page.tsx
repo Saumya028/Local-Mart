@@ -1,11 +1,11 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { setPostLoginRedirect } from "@/lib/postLoginRedirect";
-import { Sidebar, TabKey } from "@/components/shop-dashboard/Sidebar";
+import { Sidebar, TabKey, tabsForRole } from "@/components/shop-dashboard/Sidebar";
 import { Topbar } from "@/components/shop-dashboard/Topbar";
 import { DashboardTab } from "@/components/shop-dashboard/DashboardTab";
 import { OrdersTab } from "@/components/shop-dashboard/OrdersTab";
@@ -39,12 +39,37 @@ const TAB_TITLES: Record<TabKey, string> = {
   staff: "Staff",
 };
 
+// useSearchParams() needs a Suspense boundary for static prerendering.
 export default function ShopDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <ShopDashboard />
+    </Suspense>
+  );
+}
+
+function ShopDashboard() {
   const router = useRouter();
   const { profile, loading: authLoading, loggedIn, refresh } = useAuth();
+
   const [shops, setShops] = useState<Shop[]>([]);
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
+
+  // Notification links look like /shop/dashboard?tab=orders. Honour the tab
+  // (if this role may see it), then drop the param so clicking the same
+  // notification again later works too.
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const requestedTab = searchParams.get("tab");
+  useEffect(() => {
+    if (!requestedTab) return;
+    if ((tabsForRole(profile?.role) as string[]).includes(requestedTab)) {
+      setTab(requestedTab as TabKey);
+    }
+    router.replace(pathname);
+  }, [requestedTab, profile?.role, pathname, router]);
+
   const [loadingShops, setLoadingShops] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);

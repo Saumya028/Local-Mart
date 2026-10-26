@@ -1,5 +1,8 @@
+import asyncio
+import contextlib
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 import redis.exceptions
 from fastapi import FastAPI, Request
@@ -10,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.core.logging_config import setup_logging
+from app.core.notification_worker import worker_loop as notification_worker_loop
 from app.core.observability import init_sentry
 from app.core.request_context import set_request_id
 
@@ -30,6 +34,7 @@ from app.routers import (  # noqa: E402
     cart,
     categories,
     health,
+    notifications,
     orders,
     products,
     recommendations,
@@ -45,7 +50,25 @@ from app.routers import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # In-process email delivery: a tiny loop that drains the notification
+    # outbox every few seconds (see core/notification_worker.py). Safe with
+    # several API instances — rows are claimed with SKIP LOCKED.
+    worker = None
+    if settings.notification_worker_enabled:
+        worker = asyncio.create_task(notification_worker_loop())
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="LocalMart API",
     version="0.1.0",
     description="Backend for the LocalMart multi-vendor marketplace platform.",
@@ -159,6 +182,7 @@ app.include_router(cart.router)
 app.include_router(addresses.router)
 app.include_router(orders.router)
 app.include_router(returns.router)
+app.include_router(notifications.router)
 app.include_router(wishlist.router)
 app.include_router(stats.router)
 app.include_router(shop_dashboard.router)

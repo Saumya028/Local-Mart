@@ -100,3 +100,8 @@ class Profile(Base):
     # an admin/verification step — never from user input — and any
     # business-only pricing/tax treatment should key off THIS, not `gstin`.
     gst_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    # Order/return updates are always shown in the in-app bell; this only
+    # controls whether a copy is also EMAILED. Defaults on: these are
+    # transactional messages about the user's own orders.
+    email_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
