@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
 import UpiPayPanel from "@/components/payment/UpiPayPanel";
 import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
+import { DEFAULT_TZ, etaText, inr } from "@/lib/shopInfo";
 import { ReviewFormModal } from "@/components/reviews/ReviewFormModal";
 import { MyReview, ReviewEligibility, ReviewKind, reviewsPath } from "@/components/reviews/types";
 import {
@@ -194,6 +195,20 @@ export default function OrderDetailPage() {
         <p className="text-sm mt-2 font-medium">
           {STATUS_LABEL[order.status] ?? order.status}
         </p>
+        {!fulfilled && order.status !== "cancelled" && etaText(order, order.shop?.timezone || DEFAULT_TZ) && (
+          <p className="text-sm text-blue-700 mt-1">
+            {order.slot_start ? "Scheduled " : "Expected "}
+            {etaText(order, order.shop?.timezone || DEFAULT_TZ)}
+          </p>
+        )}
+        {order.shop?.contact_phone && order.status !== "cancelled" && (
+          <p className="text-xs text-gray-500 mt-1">
+            Questions about this order?{" "}
+            <a href={`tel:${order.shop.contact_phone}`} className="text-blue-600 hover:underline">
+              Call {order.shop.name}
+            </a>
+          </p>
+        )}
         {eligibleForReturn && order.delivered_at && (
           <p className="text-xs text-gray-400 mt-1">
             Eligible for return/exchange until {returnDeadline(order.delivered_at).toLocaleDateString("en-IN")}
@@ -353,9 +368,23 @@ export default function OrderDetailPage() {
         })}
       </div>
 
-      <div className="flex justify-between font-semibold">
-        <span>Total</span>
-        <span>₹{order.total_amount}</span>
+      <div className="space-y-1 text-sm">
+        {Number(order.delivery_fee ?? 0) > 0 && (
+          <>
+            <div className="flex justify-between text-gray-600">
+              <span>Items</span>
+              <span>{inr(order.subtotal_amount)}</span>
+            </div>
+            <div className="flex justify-between text-gray-600">
+              <span>Delivery</span>
+              <span>{inr(order.delivery_fee)}</span>
+            </div>
+          </>
+        )}
+        <div className="flex justify-between font-semibold text-base">
+          <span>Total</span>
+          <span>₹{order.total_amount}</span>
+        </div>
       </div>
 
       {fulfilled && order.shop && (

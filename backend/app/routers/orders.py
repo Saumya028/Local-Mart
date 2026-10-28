@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select, update
@@ -20,6 +21,8 @@ from app.core.payment_confirmation import (
 )
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
+from app.core.shop_hours import describe_eta, zone_of
+from app.core.shop_plan import ShopPlan, list_slots, plan_shop_order
 from app.core.utils import parse_uuid_or_404
 from app.models import (
     Address,
@@ -42,6 +45,7 @@ from app.schemas.order import (
     OrderDetailOut,
     OrderOut,
     PaymentInfo,
+    QuoteRequest,
 )
 from app.schemas.shop import ShopOut
 from app.schemas.notification import OrderEventOut
@@ -193,6 +197,27 @@ async def checkout(
                 )
             payment_method_by_shop[shop_id] = method
 
+        # Is each shop open / is the minimum met / which slot / what fee?
+        # One shared function (core/shop_plan.py) so what the checkout page
+        # quoted is exactly what is enforced here. Everything is checked
+        # BEFORE anything is created, so a refusal leaves no partial orders.
+        now = datetime.now(timezone.utc)
+        plans: dict[uuid.UUID, ShopPlan] = {}
+        for shop_id, items in items_by_shop.items():
+            shop_subtotal = sum((p.price * q for p, q in items), Decimal("0"))
+            plan = await plan_shop_order(
+                db,
+                shops_by_id[shop_id],
+                shop_subtotal,
+                "pickup" if shop_id in pickup_shop_ids else "delivery",
+                payload.slots.get(shop_id),
+                now=now,
+                lock=True,
+            )
+            if plan.issues:
+                raise HTTPException(status_code=plan.issues[0].http_status, detail=plan.issues[0].message)
+            plans[shop_id] = plan
+
         # An address is only needed at all if at least one shop in THIS
         # cart is being delivered — a cart that's 100% pickup never
         # touches the address book.
@@ -222,6 +247,9 @@ async def checkout(
                 total_amount=Decimal("0"),  # filled in below once we know the line totals
                 fulfillment_type="pickup" if is_pickup else "delivery",
                 delivery_address=None if is_pickup else delivery_address_snapshot,
+                eta_at=plans[shop_id].eta_at,
+                slot_start=plans[shop_id].slot[0] if plans[shop_id].slot else None,
+                slot_end=plans[shop_id].slot[1] if plans[shop_id].slot else None,
             )
             db.add(order)
             await db.flush()  # so order.id is usable as a foreign key on the OrderItems below
@@ -252,8 +280,12 @@ async def checkout(
                     )
                 )
 
-            order.total_amount = order_total
-            grand_total += order_total
+            # The fee is decided once, now, and stored on the order — a later
+            # change to the shop's pricing can never alter this order.
+            order.subtotal_amount = order_total
+            order.delivery_fee = plans[shop_id].delivery_fee
+            order.total_amount = order_total + plans[shop_id].delivery_fee
+            grand_total += order.total_amount
             created_orders.append(order)
 
         for order in created_orders:
@@ -289,6 +321,72 @@ async def checkout(
     return await idempotent(idempotency_redis_key, ttl_seconds=86400, action=do_checkout)
 
 
+@router.post("/orders/quote")
+async def quote_order(
+    payload: QuoteRequest,
+    user: Profile = Depends(rate_limit_by_user("quote", limit=120, window_seconds=60)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    "What would checkout look like right now?" — per shop in the cart: the
+    delivery fee, free-delivery progress, minimum order, whether the shop is
+    open, the ETA, the bookable time slots (with seats left) and every
+    reason checkout would currently refuse (`issues`). Nothing is created or
+    reserved. Uses the same code as the real checkout (core/shop_plan.py).
+    """
+    raw_items = await cart_store.get_cart_items(user.id)
+    products = {}
+    if raw_items:
+        result = await db.execute(select(Product).where(Product.id.in_([uuid.UUID(pid) for pid in raw_items])))
+        products = {str(p.id): p for p in result.scalars().all()}
+
+    groups: dict[uuid.UUID, list[tuple[Product, int]]] = {}
+    for pid, qty in raw_items.items():
+        product = products.get(pid)
+        if product is not None and product.is_active and 1 <= qty <= MAX_LINE_QTY:
+            groups.setdefault(product.shop_id, []).append((product, qty))
+    shops = {}
+    if groups:
+        shop_rows = await db.execute(select(Shop).where(Shop.id.in_(groups.keys())))
+        shops = {s.id: s for s in shop_rows.scalars().all()}
+
+    now = datetime.now(timezone.utc)
+    pickup = set(payload.pickup_shop_ids)
+    out = []
+    grand_total = Decimal("0")
+    can_checkout = bool(groups)
+    for shop_id, items in groups.items():
+        shop = shops[shop_id]
+        fulfillment = "pickup" if shop_id in pickup and shop.pickup_enabled and shop.address_line1 else "delivery"
+        subtotal = sum((p.price * q for p, q in items), Decimal("0"))
+        plan = await plan_shop_order(db, shop, subtotal, fulfillment, payload.slots.get(shop_id), now=now)
+        grand_total += plan.total
+        can_checkout = can_checkout and not plan.issues
+        slot = plan.slot
+        out.append(
+            {
+                "shop_id": str(shop.id),
+                "shop_name": shop.name,
+                "timezone": shop.timezone,
+                "fulfillment": fulfillment,
+                "subtotal": str(plan.subtotal),
+                "delivery_fee": str(plan.delivery_fee),
+                "total": str(plan.total),
+                "min_order_amount": str(plan.min_order_amount),
+                "min_order_shortfall": str(plan.min_order_shortfall),
+                "free_delivery_above": str(plan.free_delivery_above) if plan.free_delivery_above is not None else None,
+                "free_delivery_remaining": str(plan.free_delivery_remaining) if plan.free_delivery_remaining is not None else None,
+                "open": plan.status.as_dict(),
+                "eta_at": plan.eta_at.isoformat() if plan.eta_at else None,
+                "eta_text": describe_eta(plan.eta_at, slot[0] if slot else None, slot[1] if slot else None, zone_of(shop), now),
+                "slots_enabled": shop.slots_enabled,
+                "slots": await list_slots(db, shop, fulfillment, now) if shop.slots_enabled else [],
+                "issues": [{"code": i.code, "message": i.message} for i in plan.issues],
+            }
+        )
+    return {"shops": out, "grand_total": str(grand_total), "can_checkout": can_checkout}
+
+
 @router.get("/orders", response_model=list[OrderOut])
 async def list_orders(
     user: Profile = Depends(get_current_user),
@@ -321,6 +419,11 @@ async def list_orders(
             "status": order.status,
             "fulfillment_type": order.fulfillment_type,
             "total_amount": order.total_amount,
+            "subtotal_amount": order.subtotal_amount,
+            "delivery_fee": order.delivery_fee,
+            "eta_at": order.eta_at,
+            "slot_start": order.slot_start,
+            "slot_end": order.slot_end,
             "delivery_address": order.delivery_address,
             "created_at": order.created_at,
             "shop_name": shop_name,

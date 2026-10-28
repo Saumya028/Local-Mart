@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.return_events import return_changed
 from app.core.return_status import (
     CUSTOMER_CANCELABLE_FROM,
     RETURN_ELIGIBLE_ORDER_STATUSES,
@@ -157,6 +158,8 @@ async def create_return_request(
         status="requested",
     )
     db.add(rr)
+    await db.flush()
+    await return_changed(db, rr, "return_requested", actor=user, actor_role="customer")
     await db.commit()
     await db.refresh(rr)
 
@@ -294,6 +297,7 @@ async def choose_difference_payment(
 
     rr.difference_method = payload.method
     rr.difference_payer_reference = ref or None if payload.method == "upi" else None
+    await return_changed(db, rr, "difference_reported", actor=user, actor_role="customer")
     await db.commit()
     return _difference_info(rr, shop)
 
@@ -318,6 +322,7 @@ async def cancel_return_request(
         )
     rr.status = "cancelled"
     rr.resolved_at = datetime.now(timezone.utc)
+    await return_changed(db, rr, "return_cancelled", actor=user, actor_role="customer")
     await db.commit()
     await db.refresh(rr)
     return _serialize(rr)

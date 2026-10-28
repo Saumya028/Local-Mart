@@ -4,6 +4,8 @@ import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
 import { BannerSlot } from "@/components/banners/BannerSlot";
 import { RatingBadge } from "@/components/reviews/StarRating";
+import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
+import type { OpenInfo } from "@/lib/shopInfo";
 
 type Shop = {
   id: string;
@@ -14,6 +16,8 @@ type Shop = {
   created_at: string;
   city: string | null;
   distance_km: number | null;
+  open_info?: OpenInfo | null;
+  timezone?: string;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -116,6 +120,9 @@ export default async function StoresPage({
                   <p className="text-xs text-blue-600 font-medium">{shop.category}</p>
                 </div>
                 <p className="font-semibold text-gray-900 text-sm mt-0.5">{shop.name}</p>
+                <div className="mt-1.5">
+                  <ShopStatusBadge info={shop.open_info} timezone={shop.timezone} />
+                </div>
                 <div className="flex items-center justify-between mt-1.5">
                   <RatingBadge average={shop.rating} count={shop.rating_count ?? 0} />
                   {shop.distance_km != null && (

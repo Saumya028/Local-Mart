@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import AddressForm from "@/components/AddressForm";
 import { addressLines } from "@/lib/customerFields";
+import { inr, statusLabel, OpenInfo } from "@/lib/shopInfo";
 
 // crypto.randomUUID() isn't guaranteed to exist in every server runtime
 // this component might briefly render under during SSR, so we fall back
@@ -50,6 +51,29 @@ type CartItem = {
   shop: CartShop | null;
 };
 
+// POST /orders/quote — what checkout would look like right now (fees, open
+// status, ETA, bookable slots, and every reason it would currently refuse).
+type QuoteSlot = { start: string; end: string; label: string; remaining: number; available: boolean };
+type QuoteShop = {
+  shop_id: string;
+  shop_name: string;
+  timezone: string;
+  fulfillment: "delivery" | "pickup";
+  subtotal: string;
+  delivery_fee: string;
+  total: string;
+  min_order_amount: string;
+  min_order_shortfall: string;
+  free_delivery_above: string | null;
+  free_delivery_remaining: string | null;
+  open: OpenInfo;
+  eta_text: string | null;
+  slots_enabled: boolean;
+  slots: QuoteSlot[];
+  issues: { code: string; message: string }[];
+};
+type Quote = { shops: QuoteShop[]; grand_total: string; can_checkout: boolean };
+
 type CheckoutResponse = {
   orders: {
     id: string;
@@ -92,6 +116,13 @@ export default function CheckoutPage() {
   // Per-shop payment method, chosen straight away since the customer pays
   // each shop directly (UPI or cash) — nothing goes through LocalMart.
   const [payment, setPayment] = useState<Record<string, PayMethod>>({});
+
+  // Live price/timing preview from the backend, and the time slot chosen per
+  // shop ("" or missing = as soon as possible).
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteNonce, setQuoteNonce] = useState(0);
+  const [slotChoice, setSlotChoice] = useState<Record<string, string>>({});
 
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
@@ -165,6 +196,51 @@ export default function CheckoutPage() {
     return Array.from(byShop.values());
   }, [cartItems]);
 
+  // Re-quote whenever something that changes price or timing changes: the
+  // cart, a pickup/delivery switch, or a chosen slot.
+  const pickupIdsKey = shopGroups
+    .filter((g) => g.shop && fulfillment[g.shop.id] === "pickup")
+    .map((g) => g.shop!.id)
+    .sort()
+    .join(",");
+  const slotKey = JSON.stringify(slotChoice);
+
+  useEffect(() => {
+    if (loadingCart || cartItems.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const slots = Object.fromEntries(Object.entries(slotChoice).filter(([, v]) => v));
+        const q: Quote = await apiFetch("/orders/quote", {
+          method: "POST",
+          body: JSON.stringify({ pickup_shop_ids: pickupIdsKey ? pickupIdsKey.split(",") : [], slots }),
+        });
+        if (cancelled) return;
+        setQuote(q);
+        setQuoteError(null);
+        // Forget a chosen slot that has since filled up or expired.
+        setSlotChoice((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const s of q.shops) {
+            const chosen = next[s.shop_id];
+            if (chosen && !s.slots.some((x) => x.start === chosen && x.available)) {
+              delete next[s.shop_id];
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      } catch (err) {
+        if (!cancelled) setQuoteError((err as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingCart, cartItems.length, pickupIdsKey, slotKey, quoteNonce]);
+
   // At least one shop set to "delivery" means the address section is
   // needed at all — an all-pickup cart never touches the address book.
   const needsAddress = shopGroups.some(
@@ -201,6 +277,7 @@ export default function CheckoutPage() {
           payment_methods: Object.fromEntries(
             shopGroups.filter((g) => g.shop).map((g) => [g.shop!.id, payment[g.shop!.id]])
           ),
+          slots: Object.fromEntries(Object.entries(slotChoice).filter(([, v]) => v)),
         }),
       });
       // A single order goes straight to its page, where the UPI QR /
@@ -213,6 +290,7 @@ export default function CheckoutPage() {
       setCheckoutResult(data);
     } catch (err) {
       setError((err as Error).message);
+      setQuoteNonce((n) => n + 1); // a shop may have just closed or a slot filled: refresh what we show
     } finally {
       setLoading(false);
     }
@@ -299,6 +377,60 @@ export default function CheckoutPage() {
                       {shop.city ? `, ${shop.city}` : ""}
                     </p>
                   )}
+                  {shop && (() => {
+                    const qs = quote?.shops.find((x) => x.shop_id === shop.id);
+                    if (!qs) return null;
+                    const closedInfo = !qs.open.is_open ? statusLabel(qs.open, qs.timezone) : null;
+                    return (
+                      <div className="pt-2 border-t space-y-2">
+                        {closedInfo && (
+                          <p className="text-xs bg-amber-50 border border-amber-100 text-amber-800 rounded-md px-2.5 py-1.5">
+                            {closedInfo.label}
+                            {qs.open.message ? ` — “${qs.open.message}”` : ""}
+                          </p>
+                        )}
+
+                        {qs.slots_enabled && qs.slots.length > 0 && (
+                          <label className="block text-xs text-gray-600">
+                            <span className="font-medium">{qs.fulfillment === "pickup" ? "Pickup time" : "Delivery time"}</span>
+                            <select
+                              value={slotChoice[shop.id] ?? ""}
+                              onChange={(e) => setSlotChoice((prev) => ({ ...prev, [shop.id]: e.target.value }))}
+                              className="mt-1 w-full border rounded-md px-2 py-1.5 text-sm bg-white"
+                            >
+                              <option value="" disabled={!qs.open.is_open}>
+                                As soon as possible{qs.open.is_open ? "" : " (shop is closed)"}
+                              </option>
+                              {qs.slots.map((s) => (
+                                <option key={s.start} value={s.start} disabled={!s.available}>
+                                  {s.label} {s.available ? `(${s.remaining} left)` : "(full)"}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+
+                        <dl className="text-xs text-gray-600 space-y-0.5">
+                          <div className="flex justify-between"><dt>Items</dt><dd>{inr(qs.subtotal)}</dd></div>
+                          {qs.fulfillment === "delivery" && (
+                            <div className="flex justify-between">
+                              <dt>Delivery</dt>
+                              <dd>{Number(qs.delivery_fee) > 0 ? inr(qs.delivery_fee) : "Free"}</dd>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-medium text-gray-900"><dt>Shop total</dt><dd>{inr(qs.total)}</dd></div>
+                        </dl>
+
+                        {qs.free_delivery_remaining && Number(qs.free_delivery_remaining) > 0 && (
+                          <p className="text-xs text-emerald-700">Add {inr(qs.free_delivery_remaining)} more for free delivery.</p>
+                        )}
+                        {qs.eta_text && qs.issues.length === 0 && <p className="text-xs text-gray-500">Expected {qs.eta_text}.</p>}
+                        {qs.issues.map((i) => (
+                          <p key={i.code} className="text-xs text-red-600">{i.message}</p>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {shop && (shop.accepts_upi || shop.accepts_cash) ? (
                     <div className="pt-2 border-t space-y-1">
                       <p className="text-xs font-medium text-gray-600">Pay {shop.name} directly</p>
@@ -380,12 +512,24 @@ export default function CheckoutPage() {
             </div>
           )}
 
+          {quote && (
+            <div className="flex items-center justify-between border-t pt-3 text-sm font-semibold">
+              <span>Total to pay</span>
+              <span>{inr(quote.grand_total)}</span>
+            </div>
+          )}
+          {quoteError && <p className="text-xs text-amber-700">Couldn’t refresh prices just now: {quoteError}</p>}
+
           {error && <p className="text-sm text-red-500">{error}</p>}
 
           <button
             type="submit"
             disabled={
               loading ||
+              // While the quote is loading we wait; if it FAILS we still let the
+              // customer try — the backend enforces every rule at checkout anyway.
+              (!quote && !quoteError) ||
+              (!!quote && !quote.can_checkout) ||
               (needsAddress && !selectedAddressId) ||
               cartItems.length === 0 ||
               !!unpayableShop

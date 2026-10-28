@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { uploadDeliveryProof } from "@/lib/deliveryProofUpload";
+import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
+import { DEFAULT_TZ, etaText } from "@/lib/shopInfo";
 import {
   DashboardOrder,
   PROOF_REQUIRED_STATUSES,
@@ -41,6 +43,70 @@ export function OrdersTab({ shopId }: { shopId: string }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // "Update time" modal: tell the customer the order is running late (or early).
+  const [etaOrder, setEtaOrder] = useState<DashboardOrder | null>(null);
+  const [etaNote, setEtaNote] = useState("");
+  const [etaBusy, setEtaBusy] = useState(false);
+  const [etaError, setEtaError] = useState<string | null>(null);
+
+  async function submitEta(minutes: number) {
+    if (!etaOrder) return;
+    setEtaBusy(true);
+    setEtaError(null);
+    try {
+      const updated: DashboardOrder = await apiFetch(`/dashboard/orders/${etaOrder.id}/eta`, {
+        method: "PATCH",
+        body: JSON.stringify({ minutes_from_now: minutes, note: etaNote.trim() || null }),
+      });
+      setOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
+      setEtaOrder(null);
+      setEtaNote("");
+    } catch (err) {
+      setEtaError((err as Error).message);
+    } finally {
+      setEtaBusy(false);
+    }
+  }
+
+  // Shown under an order's id while it's still active.
+  function timing(o: DashboardOrder) {
+    if (["delivered", "picked_up", "cancelled"].includes(o.status)) return null;
+    const text = etaText(o, DEFAULT_TZ);
+    if (!text) return null;
+    return (
+      <span className="block text-[11px] text-gray-500 font-normal">
+        {o.slot_start ? "Slot: " : "Due "}
+        {text}{" "}
+        <button
+          type="button"
+          onClick={() => {
+            setEtaOrder(o);
+            setEtaError(null);
+          }}
+          className="text-blue-600 underline"
+        >
+          Change
+        </button>
+      </span>
+    );
+  }
+
+  // "History" modal: the full who-did-what log for one order.
+  const [historyOrder, setHistoryOrder] = useState<DashboardOrder | null>(null);
+  const [history, setHistory] = useState<OrderEvent[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  async function openHistory(o: DashboardOrder) {
+    setHistoryOrder(o);
+    setHistory(null);
+    setHistoryError(null);
+    try {
+      setHistory(await apiFetch(`/dashboard/orders/${o.id}/timeline`));
+    } catch (err) {
+      setHistoryError((err as Error).message);
+    }
+  }
 
   // The order currently in the "take a delivery photo" modal — separate
   // from updatingId, since opening this modal doesn't call the API yet.
@@ -315,7 +381,13 @@ export function OrdersTab({ shopId }: { shopId: string }) {
               <div key={o.id} className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-blue-600 font-medium text-sm">#{o.id.slice(0, 8)}</p>
+                    <p className="text-blue-600 font-medium text-sm">
+                      #{o.id.slice(0, 8)}{" "}
+                      <button onClick={() => openHistory(o)} className="text-xs text-gray-400 underline font-normal">
+                        History
+                      </button>
+                      {timing(o)}
+                    </p>
                     <p className="text-sm text-gray-800 truncate">{o.buyer_name || "—"}</p>
                     <p className="text-xs text-gray-400 truncate">{o.buyer_email}</p>
                   </div>
@@ -357,7 +429,13 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                 {filtered.map((o) => {
                   return (
                     <tr key={o.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40">
-                      <td className="px-5 py-3 text-blue-600 font-medium">#{o.id.slice(0, 8)}</td>
+                      <td className="px-5 py-3 text-blue-600 font-medium">
+                        #{o.id.slice(0, 8)}
+                        <button onClick={() => openHistory(o)} className="block text-[11px] text-gray-400 underline font-normal">
+                          History
+                        </button>
+                        {timing(o)}
+                      </td>
                       <td className="px-5 py-3">
                         <p className="text-gray-800">{o.buyer_name || "—"}</p>
                         <p className="text-xs text-gray-400">{o.buyer_email}</p>
@@ -460,6 +538,73 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                 {submittingProof ? "Marking delivered…" : "Mark Delivered"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {etaOrder && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          role="dialog"
+          aria-label={`Update time for order ${etaOrder.id.slice(0, 8)}`}
+          onClick={() => setEtaOrder(null)}
+        >
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">When will order #{etaOrder.id.slice(0, 8)} be ready?</h2>
+              <p className="text-xs text-gray-500">The customer is told the new time right away.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[10, 20, 30, 45, 60, 90, 120].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  disabled={etaBusy}
+                  onClick={() => submitEta(m)}
+                  className="text-sm border border-gray-200 rounded-full px-3 py-1.5 hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50"
+                >
+                  in {m >= 60 && m % 60 === 0 ? `${m / 60} hr` : `${m} min`}
+                </button>
+              ))}
+            </div>
+            <input
+              value={etaNote}
+              onChange={(e) => setEtaNote(e.target.value)}
+              maxLength={140}
+              placeholder="Reason (optional) — e.g. rush hour"
+              className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm"
+            />
+            {etaError && <p className="text-sm text-red-500">{etaError}</p>}
+            <button type="button" onClick={() => setEtaOrder(null)} className="text-sm text-gray-500 hover:underline">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {historyOrder && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          role="dialog"
+          aria-label={`History of order ${historyOrder.id.slice(0, 8)}`}
+          onClick={() => setHistoryOrder(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Order #{historyOrder.id.slice(0, 8)} history</h2>
+                <p className="text-xs text-gray-400">Every step, and who did it.</p>
+              </div>
+              <button onClick={() => setHistoryOrder(null)} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+                ✕
+              </button>
+            </div>
+            {historyError && <p className="text-sm text-red-500">{historyError}</p>}
+            {!history && !historyError && <p className="text-sm text-gray-400">Loading…</p>}
+            {history && <OrderTimeline events={history} />}
           </div>
         </div>
       )}

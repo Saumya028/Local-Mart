@@ -1,3 +1,4 @@
+import type { OpenInfo, OpeningHours } from "@/lib/shopInfo";
 export type ShopDocument = { name: string; doc_type: string; url: string };
 
 export type Shop = {
@@ -30,6 +31,25 @@ export type Shop = {
   // Paid promotion — see SponsorshipTab.
   is_sponsored?: boolean;
   sponsored_until?: string | null;
+  // ---- Profile, hours, pricing & timing (see StoreSettingsTab) ----------
+  contact_phone?: string | null;
+  description?: string | null;
+  // null = no hours set = treated as always open.
+  opening_hours?: OpeningHours | null;
+  timezone?: string;
+  open_info?: OpenInfo | null;
+  temporarily_closed?: boolean;
+  closed_until?: string | null;
+  closed_message?: string | null;
+  delivery_fee?: string | number;
+  free_delivery_above?: string | number | null;
+  min_order_amount?: string | number;
+  prep_time_minutes?: number;
+  delivery_time_minutes?: number;
+  slots_enabled?: boolean;
+  slot_length_minutes?: number;
+  slot_capacity?: number;
+  slot_days_ahead?: number;
 };
 
 export type Product = {
@@ -56,6 +76,14 @@ export type DashboardOrder = {
   // what's shown.
   fulfillment_type: string;
   total_amount: string;
+  // total_amount = subtotal_amount + delivery_fee (the fee is fixed when the order is placed)
+  subtotal_amount?: string;
+  delivery_fee?: string;
+  // When the customer expects it: the END of their slot for a scheduled order,
+  // otherwise placement time + prep (+ delivery) time. Shops can move it.
+  eta_at?: string | null;
+  slot_start?: string | null;
+  slot_end?: string | null;
   delivery_address: string | null;
   buyer_email: string;
   buyer_name: string | null;

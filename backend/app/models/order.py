@@ -45,7 +45,18 @@ class Order(Base):
     status: Mapped[str] = mapped_column(
         String, default="pending", server_default="pending", index=True
     )
+    # total_amount = subtotal_amount + delivery_fee — what the customer
+    # actually pays the shop. The split is stored (not recomputed) so a later
+    # change to the shop's fee can never alter a past order.
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    subtotal_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0, server_default="0")
+    delivery_fee: Mapped[float] = mapped_column(Numeric(10, 2), default=0, server_default="0")
+    # When the customer should expect it. For a scheduled order this is the END of
+    # the chosen slot; otherwise placement time + prep (+ delivery) time. The
+    # shop can move it later (event "eta_changed").
+    eta_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    slot_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    slot_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # "delivery" (default — matches every order created before this
     # feature) or "pickup", set once at checkout (see routers/orders.py's
     # checkout) and never changed after. Decides which of

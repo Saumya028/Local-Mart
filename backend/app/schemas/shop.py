@@ -1,9 +1,14 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core import customer_validation as cv
+from app.core.shop_hours import normalize_opening_hours, validate_timezone
 from app.core.upi import is_valid_upi_id, normalize_upi_id
+
+SLOT_LENGTHS = (15, 30, 45, 60, 90, 120, 180, 240)
 
 # Kept in sync by hand with admin.py's VALID_DOCS_STATUSES:
 # "pending"   — no documents on file yet, or an admin has explicitly
@@ -47,6 +52,24 @@ class ShopCreate(BaseModel):
     # create_shop against AttributeSchema(kind="shop") for the chosen
     # category; {} is fine for a category with no schema defined.
     attributes: dict = {}
+
+    # Customers (and the platform, for the shop's own order issues) need a
+    # way to reach the shop: required to apply.
+    contact_phone: str
+    description: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def _phone(cls, v: str) -> str:
+        cleaned = cv.validate_phone(v)
+        if cleaned is None:
+            raise ValueError("A contact phone number is required")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def _about(cls, v: str | None) -> str | None:
+        return (v.strip() or None) if v else None
 
     @field_validator("documents")
     @classmethod
@@ -98,6 +121,62 @@ class ShopUpdate(BaseModel):
     # route's handling: setting this also flips docs_status back to
     # "submitted" and clears any prior rejection_reason.
     documents: list[ShopDocument] | None = None
+
+    # ---- profile -------------------------------------------------------
+    contact_phone: str | None = None
+    description: str | None = Field(default=None, max_length=1000)
+    # ---- hours & closure ------------------------------------------------
+    # null clears the schedule (= always open); see core/shop_hours.py.
+    opening_hours: dict | None = None
+    timezone: str | None = None
+    temporarily_closed: bool | None = None
+    closed_until: datetime | None = None
+    closed_message: str | None = Field(default=None, max_length=140)
+    # ---- delivery pricing (delivery orders only) -------------------------
+    delivery_fee: Decimal | None = Field(default=None, ge=0, le=5000, decimal_places=2)
+    free_delivery_above: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
+    min_order_amount: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
+    # ---- timing ----------------------------------------------------------
+    prep_time_minutes: int | None = Field(default=None, ge=0, le=720)
+    delivery_time_minutes: int | None = Field(default=None, ge=0, le=720)
+    slots_enabled: bool | None = None
+    slot_length_minutes: int | None = None
+    slot_capacity: int | None = Field(default=None, ge=1, le=500)
+    slot_days_ahead: int | None = Field(default=None, ge=1, le=7)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def _phone(cls, v: str | None) -> str | None:
+        return cv.validate_phone(v)
+
+    @field_validator("description", "closed_message")
+    @classmethod
+    def _blank_to_none(cls, v: str | None) -> str | None:
+        return (v.strip() or None) if v else None
+
+    @field_validator("opening_hours")
+    @classmethod
+    def _hours(cls, v: dict | None) -> dict | None:
+        return normalize_opening_hours(v)
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: str | None) -> str | None:
+        return validate_timezone(v) if v else v
+
+    @field_validator("closed_until")
+    @classmethod
+    def _aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            raise ValueError("closed_until must include a timezone (e.g. 2026-11-02T09:00:00+05:30)")
+        return v
+
+    @field_validator("slot_length_minutes")
+    @classmethod
+    def _slot_len(cls, v: int | None) -> int | None:
+        if v is not None and v not in SLOT_LENGTHS:
+            raise ValueError(f"Slot length must be one of {', '.join(map(str, SLOT_LENGTHS))} minutes")
+        return v
 
     @field_validator("latitude")
     @classmethod
@@ -179,6 +258,23 @@ class ShopOut(BaseModel):
     # call, including the plain unfiltered GET /shops.
     distance_km: float | None = None
 
+    # ---- profile / hours / pricing / timing (all public) -----------------
+    contact_phone: str | None = None
+    description: str | None = None
+    opening_hours: dict | None = None
+    timezone: str = "Asia/Kolkata"
+    # Computed at response time: {is_open, state, opens_at, closes_at, message}.
+    # (Shop responses are cached for up to 60s — the checkout re-checks.)
+    open_info: dict | None = None
+    delivery_fee: Decimal = Decimal("0")
+    free_delivery_above: Decimal | None = None
+    min_order_amount: Decimal = Decimal("0")
+    prep_time_minutes: int = 30
+    delivery_time_minutes: int = 30
+    slots_enabled: bool = False
+    slot_length_minutes: int = 60
+    slot_days_ahead: int = 2
+
 
 class DashboardShopOut(ShopOut):
     """
@@ -201,3 +297,7 @@ class DashboardShopOut(ShopOut):
     # The owner's own payment details — see Shop.upi_id.
     upi_id: str | None = None
     upi_qr_url: str | None = None
+    temporarily_closed: bool = False
+    closed_until: datetime | None = None
+    closed_message: str | None = None
+    slot_capacity: int = 5

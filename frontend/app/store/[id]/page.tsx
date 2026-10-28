@@ -4,8 +4,10 @@ import WishlistButton from "@/components/WishlistButton";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 import { RatingBadge } from "@/components/reviews/StarRating";
 import { ShopReviewsSection } from "@/components/reviews/ShopReviewsSection";
+import { ShopInfoPanel, PublicShopInfo } from "@/components/shop/ShopInfoPanel";
+import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
 
-type Shop = { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
+type Shop = PublicShopInfo & { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
 type Product = { id: string; name: string; price: string; category: string; images: string[]; rating_avg?: number; rating_count?: number };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -55,11 +57,16 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
         <div>
           <p className="text-sm text-blue-600 font-medium">{shop.category}</p>
           <h1 className="text-2xl font-bold text-gray-900">{shop.name}</h1>
-          <a href="#reviews" className="inline-block mt-1 hover:underline">
-            <RatingBadge average={shop.rating} count={shop.rating_count ?? 0} className="text-sm" />
-          </a>
+          <div className="flex flex-wrap items-center gap-3 mt-1">
+            <a href="#reviews" className="inline-block hover:underline">
+              <RatingBadge average={shop.rating} count={shop.rating_count ?? 0} className="text-sm" />
+            </a>
+            <ShopStatusBadge info={shop.open_info} timezone={shop.timezone} />
+          </div>
         </div>
       </div>
+
+      <ShopInfoPanel shop={shop} />
 
       <div>
         <h2 className="text-lg font-bold text-gray-900 mb-4">Products</h2>

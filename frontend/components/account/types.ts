@@ -5,6 +5,13 @@ export type AccountOrder = {
   status: string;
   fulfillment_type: string;
   total_amount: string;
+  // total_amount = subtotal_amount + delivery_fee
+  subtotal_amount?: string;
+  delivery_fee?: string;
+  // Expected time: the end of the chosen slot, or placement + prep (+ delivery).
+  eta_at?: string | null;
+  slot_start?: string | null;
+  slot_end?: string | null;
   item_count: number;
   delivery_address: string | null;
   created_at: string;
@@ -62,7 +69,14 @@ export type OrderDetail = AccountOrder & {
   items: OrderDetailItem[];
   delivered_at: string | null;
   delivery_proof_photo_url?: string | null;
-  shop: { id: string; name: string; address_line1?: string | null; city?: string | null } | null;
+  shop: {
+    id: string;
+    name: string;
+    address_line1?: string | null;
+    city?: string | null;
+    contact_phone?: string | null;
+    timezone?: string;
+  } | null;
   payment?: PaymentInfo | null;
   // The customer's own review of this shop, if they wrote one.
   shop_review_id?: string | null;

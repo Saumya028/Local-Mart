@@ -17,9 +17,13 @@ Failure policy:
 """
 import logging
 
+from datetime import datetime, timezone
+from decimal import Decimal
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.notification_templates import customer_message, money, order_ref, shop_message
+from app.core.shop_hours import describe_eta, zone_of
 from app.core.notifications import create_notification, shop_team
 from app.core.payment_confirmation import get_payment
 from app.models import Order, OrderEvent, OrderItem, Profile, Shop
@@ -81,8 +85,20 @@ async def _notify(db: AsyncSession, order: Order, event: OrderEvent, actor: Prof
         await db.execute(select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(OrderItem.order_id == order.id))
     ).scalar_one()
 
+    now = datetime.now(timezone.utc)
+    # After an ETA change the original slot no longer describes the expectation.
+    keep_slot = event.kind != "eta_changed"
+    fee = Decimal(str(order.delivery_fee or 0))
     ctx = {
         **(event.meta or {}),
+        "eta_text": describe_eta(
+            order.eta_at,
+            order.slot_start if keep_slot else None,
+            order.slot_end if keep_slot else None,
+            zone_of(shop),
+            now,
+        ),
+        "fee_text": f" incl. {money(fee)} delivery" if fee > 0 else "",
         "ref": order_ref(order.id),
         "shop_name": shop.name,
         "buyer_name": buyer.full_name,

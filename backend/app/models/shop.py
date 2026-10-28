@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, func
+from decimal import Decimal
+
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -112,7 +114,54 @@ class Shop(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
 
+    # ---- Contact & profile ---------------------------------------------
+    # Public contact number shown to customers ("+91XXXXXXXXXX"). Required
+    # for new applications; shops created before this existed have NULL.
+    contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ---- Opening hours -------------------------------------------------
+    # {"mon": [{"open": "09:00", "close": "21:00"}], ..., "sun": []}
+    # A day mapped to [] is closed all day. NULL = the owner hasn't set any
+    # hours yet, which means "always open" so shops that existed before this
+    # feature keep working. See app/core/shop_hours.py for the rules
+    # (overnight ranges, "24:00", ...).
+    opening_hours: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    timezone: Mapped[str] = mapped_column(String, default="Asia/Kolkata", server_default="Asia/Kolkata")
+    # Vacation / "closed for now" switch. Visible to customers (unlike
+    # is_active, which unlists the shop entirely). `closed_until` reopens it
+    # automatically; NULL means "until the owner switches it back".
+    temporarily_closed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    closed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_message: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # ---- Delivery pricing (applies to DELIVERY orders only) --------------
+    delivery_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, server_default="0")
+    # Order subtotal at/above which delivery is free. NULL = never free.
+    free_delivery_above: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # Minimum item subtotal for a delivery order. 0 = no minimum.
+    min_order_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, server_default="0")
+
+    # ---- Timing: ETA and optional scheduled slots -----------------------
+    prep_time_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    delivery_time_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    slots_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    slot_length_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    # Max non-cancelled orders per slot.
+    slot_capacity: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
+    # How many calendar days (today included) customers can book into.
+    slot_days_ahead: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def open_info(self) -> dict:
+        """Computed (never stored): is the shop taking orders right now,
+        and when does that change? Read by ShopOut so every public shop
+        response carries it."""
+        from app.core.shop_hours import open_status
+
+        return open_status(self).as_dict()
 
     @property
     def is_sponsored(self) -> bool:

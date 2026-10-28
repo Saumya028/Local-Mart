@@ -175,6 +175,8 @@ async def create_shop(
         latitude=payload.latitude,
         longitude=payload.longitude,
         attributes=payload.attributes,
+        contact_phone=payload.contact_phone,
+        description=payload.description,
     )
     db.add(shop)
 

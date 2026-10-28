@@ -3,7 +3,7 @@
 import { NavDrawer } from "@/components/dashboard/NavDrawer";
 import { Shop } from "./types";
 
-export type TabKey = "dashboard" | "orders" | "returns" | "reviews" | "products" | "inventory" | "analytics" | "payments" | "promote" | "banners" | "staff";
+export type TabKey = "dashboard" | "orders" | "returns" | "reviews" | "products" | "inventory" | "analytics" | "payments" | "settings" | "promote" | "banners" | "staff";
 
 // Which tabs each role can see, in nav order. Purely a UI convenience —
 // the backend independently enforces the same boundaries on every
@@ -13,8 +13,8 @@ export type TabKey = "dashboard" | "orders" | "returns" | "reviews" | "products"
 // except Staff (owner-only); a delivery hire gets Orders alone — the
 // one tab their whole job is built around.
 const ROLE_TABS: Record<string, TabKey[]> = {
-  shop_owner: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
-  admin: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "promote", "banners", "staff"],
+  shop_owner: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "settings", "promote", "banners", "staff"],
+  admin: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics", "payments", "settings", "promote", "banners", "staff"],
   manager: ["dashboard", "orders", "returns", "reviews", "products", "inventory", "analytics"],
   delivery_partner: ["orders"],
 };
@@ -126,6 +126,21 @@ const NAV: { key: TabKey; label: string; icon: JSX.Element }[] = [
         <rect x="2.5" y="5" width="15" height="10" rx="2" stroke="currentColor" strokeWidth="1.6" />
         <path d="M2.5 8.5h15" stroke="currentColor" strokeWidth="1.6" />
         <path d="M5.5 12.5h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "settings",
+    label: "Store settings",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <circle cx="10" cy="10" r="2.6" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1 4.7 4.7"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
       </svg>
     ),
   },

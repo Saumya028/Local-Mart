@@ -55,15 +55,19 @@ def customer_message(kind: str, ctx: dict) -> Msg | None:
     if kind == "order_placed":
         if ctx.get("source") == "exchange":
             return None  # covered by the return_completed message
+        when = f" Expected {ctx['eta_text']}." if ctx.get("eta_text") else ""
         return Msg(
             f"Order placed with {shop}",
-            f"Your order {ref} ({ctx['total']}) was sent to {shop}. {_pay_line(ctx)}",
+            f"Your order {ref} ({ctx['total']}{ctx.get('fee_text', '')}) was sent to {shop}. {_pay_line(ctx)}{when}",
         )
     if kind == "status_changed":
         text = _STATUS_TEXT.get(ctx.get("to_status") or "")
         if not text:
             return None
         return Msg(text[0].format(shop=shop, ref=ref), text[1].format(shop=shop, ref=ref))
+    if kind == "eta_changed":
+        note = f" {ctx['note']}" if ctx.get("note") else ""
+        return Msg(f"New time for order {ref}", f"{shop} now expects it {ctx.get('eta_text', 'a little later')}.{note}")
     if kind == "payment_confirmed":
         if ctx.get("auto"):
             return None  # cash collected at hand-over; the "delivered" message already covers it
@@ -108,9 +112,10 @@ def shop_message(kind: str, ctx: dict) -> Msg | None:
         n = ctx.get("item_count")
         items = f"{n} item{'s' if n != 1 else ''}, " if n else ""
         method = "UPI" if ctx.get("payment_method") == "upi" else "cash"
+        when = f" They expect it {ctx['eta_text']}." if ctx.get("eta_text") else ""
         return Msg(
             f"New order — {ctx['total']}",
-            f"{buyer} placed order {ref}: {items}{_how(ctx)}, paying by {method}. Please open it and start preparing.",
+            f"{buyer} placed order {ref}: {items}{_how(ctx)}, paying by {method}.{when} Please open it and start preparing.",
         )
     if kind == "payment_submitted":
         utr = f" (UTR {ctx['utr']})" if ctx.get("utr") else ""

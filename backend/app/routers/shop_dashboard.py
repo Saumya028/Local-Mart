@@ -41,7 +41,7 @@ from app.schemas.dashboard import (
     RecentOrderPreview,
     TopProductOut,
 )
-from app.schemas.order import DashboardOrderOut, OrderStatusUpdate
+from app.schemas.order import DashboardOrderOut, EtaUpdate, OrderStatusUpdate
 from app.schemas.notification import OrderEventOut
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
@@ -253,6 +253,30 @@ async def update_my_shop(
         merged_attributes = updates.get("attributes", shop.attributes)
         await validate_attributes(db, "shop", merged_category, merged_attributes)
 
+    if updates.get("contact_phone", "x") is None:
+        raise HTTPException(status_code=400, detail="A contact phone number is required")
+
+    # Checks that need the shop's CURRENT values merged with the request.
+    merged_hours = updates["opening_hours"] if "opening_hours" in updates else shop.opening_hours
+    merged_slots = updates["slots_enabled"] if "slots_enabled" in updates else shop.slots_enabled
+    if merged_slots and not merged_hours:
+        raise HTTPException(
+            status_code=400,
+            detail="Set your opening hours before turning on time slots — slots are generated from them.",
+        )
+    if updates.get("temporarily_closed") is True:
+        until = updates.get("closed_until")
+        if until is not None and until <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="“Closed until” must be a time in the future")
+    if updates.get("temporarily_closed") is False:
+        # Reopening wipes the reason and the end time so they can't resurface next time.
+        updates["closed_until"] = None
+        updates["closed_message"] = None
+    elif "closed_until" in updates and updates["closed_until"] is not None and not (
+        updates.get("temporarily_closed", shop.temporarily_closed)
+    ):
+        raise HTTPException(status_code=400, detail="Turn on “Temporarily closed” to set when you’ll reopen")
+
     for key, value in updates.items():
         setattr(shop, key, value)
 
@@ -416,6 +440,11 @@ def _dashboard_order_dict(order: Order, buyer_email, buyer_name, item_count, pay
         "status": order.status,
         "fulfillment_type": order.fulfillment_type,
         "total_amount": order.total_amount,
+        "subtotal_amount": order.subtotal_amount,
+        "delivery_fee": order.delivery_fee,
+        "eta_at": order.eta_at,
+        "slot_start": order.slot_start,
+        "slot_end": order.slot_end,
         "delivery_address": order.delivery_address,
         "created_at": order.created_at,
         "buyer_email": buyer_email,
@@ -543,6 +572,45 @@ async def update_order_status(
         )
     await db.commit()
 
+    return await _order_response(db, order)
+
+
+@router.patch("/orders/{order_id}/eta", response_model=DashboardOrderOut)
+async def update_order_eta(
+    order_id: str,
+    payload: EtaUpdate,
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tell the customer when to actually expect the order (e.g. "running 20
+    minutes late"). Recorded in the order's history and the customer is
+    notified."""
+    order = await _load_manageable_order(order_id, user, db)
+    if order.status == "cancelled" or order.status in TERMINAL_STATUSES:
+        raise HTTPException(status_code=400, detail="This order is already finished")
+    if (payload.minutes_from_now is None) == (payload.eta_at is None):
+        raise HTTPException(status_code=400, detail="Send either minutes_from_now or eta_at")
+
+    now = datetime.now(timezone.utc)
+    if payload.minutes_from_now is not None:
+        if not 1 <= payload.minutes_from_now <= 24 * 60:
+            raise HTTPException(status_code=400, detail="Choose between 1 minute and 24 hours from now")
+        new_eta = now + timedelta(minutes=payload.minutes_from_now)
+    else:
+        if payload.eta_at.tzinfo is None:
+            raise HTTPException(status_code=400, detail="eta_at must include a timezone")
+        new_eta = payload.eta_at.astimezone(timezone.utc)
+        if new_eta <= now or new_eta > now + timedelta(days=7):
+            raise HTTPException(status_code=400, detail="The new time must be within the next 7 days")
+
+    old_eta = order.eta_at
+    order.eta_at = new_eta
+    note = (payload.note or "").strip()[:140] or None
+    await order_changed(
+        db, order, "eta_changed", actor=user, note=note,
+        meta={"from_eta": old_eta.isoformat() if old_eta else None, "to_eta": new_eta.isoformat()},
+    )
+    await db.commit()
     return await _order_response(db, order)
 
 
@@ -1062,6 +1130,7 @@ async def update_return_status(
                 shop_id=rr.shop_id,
                 status="confirmed",
                 total_amount=exchange_price * rr.quantity,
+                subtotal_amount=exchange_price * rr.quantity,
                 delivery_address=delivery_address,
             )
             db.add(new_order)

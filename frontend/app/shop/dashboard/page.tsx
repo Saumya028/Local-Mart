@@ -15,6 +15,7 @@ import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
 import { AnalyticsTab } from "@/components/shop-dashboard/AnalyticsTab";
 import { StaffTab } from "@/components/shop-dashboard/StaffTab";
+import { StoreSettingsTab } from "@/components/shop-dashboard/StoreSettingsTab";
 import { PaymentSettingsTab } from "@/components/shop-dashboard/PaymentSettingsTab";
 import { SponsorshipTab } from "@/components/shop-dashboard/SponsorshipTab";
 import { BannersTab } from "@/components/shop-dashboard/BannersTab";
@@ -34,6 +35,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   inventory: "Inventory",
   analytics: "Analytics",
   payments: "Payments",
+  settings: "Store settings",
   promote: "Promote",
   banners: "Banners",
   staff: "Staff",
@@ -329,6 +331,13 @@ function ShopDashboard() {
               onSaved={(updated) => setShops((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
             />
           )}
+          {selectedShopId && tab === "settings" && selectedShop && (
+            <StoreSettingsTab
+              key={selectedShop.id}
+              shop={selectedShop}
+              onSaved={(updated) => setShops((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
+            />
+          )}
           {selectedShopId && tab === "promote" && selectedShop && (
             <SponsorshipTab
               key={selectedShop.id}
@@ -364,6 +373,8 @@ function ApplyForm({
   const [category, setCategory] = useState("");
   const [addressLine1, setAddressLine1] = useState("");
   const [city, setCity] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [about, setAbout] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -428,6 +439,8 @@ function ApplyForm({
           documents,
           address_line1: addressLine1,
           city,
+          contact_phone: contactPhone,
+          description: about || null,
           latitude: coords.lat,
           longitude: coords.lng,
           attributes,
@@ -466,6 +479,30 @@ function ApplyForm({
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div className="border-t border-gray-100 pt-4 space-y-3">
+        <p className="text-sm font-medium text-gray-900">Contact</p>
+        <p className="text-xs text-gray-500 -mt-1">
+          Customers see this number on your shop page, so they can call about an order.
+        </p>
+        <input
+          type="tel"
+          inputMode="tel"
+          placeholder="Shop contact phone (10-digit mobile)"
+          value={contactPhone}
+          onChange={(e) => setContactPhone(e.target.value)}
+          required
+          className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <textarea
+          placeholder="About your shop (optional) — what you sell, how long you’ve been around"
+          value={about}
+          onChange={(e) => setAbout(e.target.value)}
+          rows={2}
+          maxLength={1000}
           className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>

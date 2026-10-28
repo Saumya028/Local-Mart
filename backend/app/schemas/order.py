@@ -27,6 +27,14 @@ class CheckoutRequest(BaseModel):
     # shop (= per order). Validated in routers/orders.py against what
     # each shop actually accepts.
     payment_methods: dict[uuid.UUID, str] = {}
+    # shop_id -> START of the chosen time slot (as returned by /orders/quote).
+    # A shop missing here is ordered "as soon as possible".
+    slots: dict[uuid.UUID, datetime] = {}
+
+
+class QuoteRequest(BaseModel):
+    pickup_shop_ids: list[uuid.UUID] = []
+    slots: dict[uuid.UUID, datetime] = {}
 
 
 class OrderOut(BaseModel):
@@ -40,6 +48,12 @@ class OrderOut(BaseModel):
     # delivery_address or the shop's own address is what's shown.
     fulfillment_type: str = "delivery"
     total_amount: Decimal
+    # total_amount = subtotal_amount + delivery_fee
+    subtotal_amount: Decimal = Decimal("0")
+    delivery_fee: Decimal = Decimal("0")
+    eta_at: datetime | None = None
+    slot_start: datetime | None = None
+    slot_end: datetime | None = None
     delivery_address: str | None = None
     created_at: datetime
     # Added for the My Account > My Orders list (a card per order needs
@@ -165,3 +179,12 @@ class DashboardOrderOut(OrderOut):
     item_count: int = 0
     payer_reference: str | None = None
     payment_marked_at: datetime | None = None
+
+
+class EtaUpdate(BaseModel):
+    """Shop tells the customer the order will take longer (or be ready
+    sooner). Send EITHER `minutes_from_now` or an absolute `eta_at`."""
+
+    minutes_from_now: int | None = None
+    eta_at: datetime | None = None
+    note: str | None = None
