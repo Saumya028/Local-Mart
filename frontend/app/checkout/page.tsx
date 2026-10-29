@@ -45,7 +45,7 @@ type CartShop = {
 type PayMethod = "upi" | "cash";
 
 type CartItem = {
-  product: { id: string; name: string; price: string; images: string[] };
+  product: { id: string; name: string; price: string; unit_label?: string | null; images: string[] };
   quantity: number;
   subtotal: string;
   shop: CartShop | null;
@@ -345,7 +345,7 @@ export default function CheckoutPage() {
                   <ul className="text-xs text-gray-500 space-y-0.5">
                     {items.map((item) => (
                       <li key={item.product.id}>
-                        {item.quantity}× {item.product.name}
+                        {item.quantity}× {item.product.name}{item.product.unit_label ? ` (${item.product.unit_label})` : ""}
                       </li>
                     ))}
                   </ul>

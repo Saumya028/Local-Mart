@@ -8,6 +8,7 @@ import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
 import { DEFAULT_TZ, etaText } from "@/lib/shopInfo";
 import {
   DashboardOrder,
+  DashboardOrderItem,
   PROOF_REQUIRED_STATUSES,
   formatINR,
   statusMeta,
@@ -30,6 +31,32 @@ const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
 // Mirrors backend SHOP_CANCELABLE_FROM — a shop can cancel any time
 // before the order leaves for delivery / is ready for pickup.
 const SHOP_CANCELABLE = new Set(["confirmed", "preparing", "packing"]);
+
+function OrderItemsList({ items }: { items?: DashboardOrderItem[] }) {
+  if (!items || items.length === 0) return <span className="text-gray-400">—</span>;
+  return (
+    <ul className="space-y-1.5">
+      {items.map((it) => {
+        // Size / pack / variant — e.g. "1 L", "500 ml", "Red" — so variants
+        // sharing a product name can be told apart.
+        const details = [it.unit_label, it.variant_label].filter(Boolean).join(" · ");
+        return (
+          <li key={it.id} className="text-sm text-gray-800 flex items-baseline gap-2">
+            <span className="shrink-0 font-semibold text-gray-900">{it.quantity}×</span>
+            <span>
+              {it.product_name}
+              {details ? (
+                <span className="ml-1.5 inline-block rounded bg-amber-50 text-amber-800 px-1.5 py-0.5 text-xs font-medium">
+                  {details}
+                </span>
+              ) : null}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function OrdersTab({ shopId }: { shopId: string }) {
   const { profile } = useAuth();
@@ -227,7 +254,8 @@ export function OrdersTab({ shopId }: { shopId: string }) {
       return (
         o.id.toLowerCase().includes(q) ||
         (o.buyer_name ?? "").toLowerCase().includes(q) ||
-        o.buyer_email.toLowerCase().includes(q)
+        o.buyer_email.toLowerCase().includes(q) ||
+        (o.items ?? []).some((it) => it.product_name.toLowerCase().includes(q))
       );
     });
   }, [orders, filter, search]);
@@ -405,6 +433,9 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                     </span>
                   </div>
                 </div>
+                <div className="rounded-lg bg-gray-50 px-3 py-2">
+                  <OrderItemsList items={o.items} />
+                </div>
                 <div>{statusCell(o)}</div>
                 {actionCell(o)}
               </div>
@@ -451,7 +482,9 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                           {o.fulfillment_type === "pickup" ? "Pickup" : "Delivery"}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-gray-500">{o.item_count} items</td>
+                      <td className="px-5 py-3 min-w-[200px]">
+                        <OrderItemsList items={o.items} />
+                      </td>
                       <td className="px-5 py-3 font-medium text-gray-800">{formatINR(o.total_amount)}</td>
                       <td className="px-5 py-3">
                         {statusCell(o)}

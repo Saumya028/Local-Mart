@@ -50,6 +50,7 @@ export type Shop = {
   slot_length_minutes?: number;
   slot_capacity?: number;
   slot_days_ahead?: number;
+  low_stock_threshold?: number;
 };
 
 export type Product = {
@@ -64,6 +65,30 @@ export type Product = {
   images: string[];
   variant_group_id: string | null;
   variant_attributes: Record<string, string>;
+  // ---- pricing, size & identifiers (price is always the SELLING price) ----
+  mrp?: string | null;
+  unit_value?: string | null;
+  unit?: string | null;
+  unit_label?: string | null;
+  discount_percent?: number | null;
+  unit_price_label?: string | null;
+  sku?: string | null;
+  barcode?: string | null;
+  // ---- low-stock alerts ----------------------------------------------------
+  low_stock_threshold?: number | null; // null = use the shop default
+  effective_low_stock_threshold?: number;
+  stock_status?: "ok" | "low" | "out";
+};
+
+export type DashboardOrderItem = {
+  id: string;
+  product_id: string;
+  product_name: string;
+  variant_label?: string | null;
+  quantity: number;
+  unit_price: string;
+  unit_label?: string | null;
+  subtotal: string;
 };
 
 export type DashboardOrder = {
@@ -88,6 +113,8 @@ export type DashboardOrder = {
   buyer_email: string;
   buyer_name: string | null;
   item_count: number;
+  // What was ordered — product + quantity per line.
+  items?: DashboardOrderItem[];
   created_at: string;
   delivered_at: string | null;
   delivery_proof_photo_url: string | null;

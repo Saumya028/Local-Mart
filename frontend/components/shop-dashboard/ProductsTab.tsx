@@ -1,5 +1,6 @@
 "use client";
 
+import { PriceTag } from "@/components/product/PriceTag";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { useAttributeSchema } from "@/lib/attributeSchema";
@@ -9,8 +10,10 @@ import { Product, formatINR } from "./types";
 
 function stockBadge(p: Product) {
   if (!p.is_active) return { label: "Inactive", className: "bg-gray-100 text-gray-500" };
-  if (p.stock_qty === 0) return { label: "Out of Stock", className: "bg-red-100 text-red-600" };
-  if (p.stock_qty <= 15) return { label: "Low Stock", className: "bg-amber-100 text-amber-700" };
+  if (p.stock_status === "out" || p.stock_qty <= 0) return { label: "Out of Stock", className: "bg-red-100 text-red-600" };
+  if (p.stock_status === "low") {
+    return { label: `Low stock (≤${p.effective_low_stock_threshold ?? "?"})`, className: "bg-amber-100 text-amber-700" };
+  }
   return { label: "Active", className: "bg-emerald-100 text-emerald-700" };
 }
 
@@ -55,7 +58,13 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
   const filtered = useMemo(() => {
     if (!search.trim()) return products;
     const q = search.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+    return products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        (p.sku ?? "").toLowerCase().includes(q) ||
+        (p.barcode ?? "") === search.trim()
+    );
   }, [products, search]);
 
   return (
@@ -64,7 +73,7 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search products…"
+          placeholder="Search name, SKU or barcode…"
           className="w-full sm:w-72 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <button
@@ -224,9 +233,11 @@ function ProductCard({
         <div className="min-w-0 flex-1">
           <p className="font-medium text-gray-800">{product.name}</p>
           {variantLabel && <p className="text-xs text-gray-400">{variantLabel}</p>}
-          <p className="text-xs text-gray-500 mt-0.5">{product.category}</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {[product.category, product.unit_label, product.sku && `SKU ${product.sku}`].filter(Boolean).join(" · ")}
+          </p>
         </div>
-        <p className="font-semibold text-gray-900 shrink-0">{formatINR(product.price)}</p>
+        <PriceTag p={product} showStock={false} className="shrink-0 text-right" />
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <label className="flex items-center gap-2 text-xs text-gray-500">
@@ -289,11 +300,18 @@ function ProductRow({
           <div>
             <p className="font-medium text-gray-800">{product.name}</p>
             {variantLabel && <p className="text-xs text-gray-400">{variantLabel}</p>}
+            {(product.unit_label || product.sku) && (
+              <p className="text-xs text-gray-400">
+                {[product.unit_label, product.sku && `SKU ${product.sku}`].filter(Boolean).join(" · ")}
+              </p>
+            )}
           </div>
         </div>
       </td>
       <td className="px-5 py-3 text-gray-500">{product.category}</td>
-      <td className="px-5 py-3 font-medium text-gray-800">{formatINR(product.price)}</td>
+      <td className="px-5 py-3">
+        <PriceTag p={product} showStock={false} />
+      </td>
       <td className="px-5 py-3">
         <input
           type="number"
@@ -360,6 +378,12 @@ function ProductForm({
   const [category, setCategory] = useState(product?.category ?? "");
   const [price, setPrice] = useState(product?.price ?? "");
   const [stock, setStock] = useState(String(product?.stock_qty ?? 0));
+  const [mrp, setMrp] = useState(product?.mrp != null ? String(Number(product.mrp)) : "");
+  const [unitValue, setUnitValue] = useState(product?.unit_value != null ? String(Number(product.unit_value)) : "");
+  const [unit, setUnit] = useState(product?.unit ?? "");
+  const [sku, setSku] = useState(product?.sku ?? "");
+  const [barcode, setBarcode] = useState(product?.barcode ?? "");
+  const [lowAt, setLowAt] = useState(product?.low_stock_threshold != null ? String(product.low_stock_threshold) : "");
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [attributes, setAttributes] = useState<Record<string, string | number | boolean>>(
     product?.attributes ?? {}
@@ -383,10 +407,36 @@ function ProductForm({
     setAttributes((prev) => ({ ...prev, [key]: value }));
   }
 
+  // What the customer will see: MRP struck through and the % saved.
+  const priceNum = Number(price);
+  const mrpNum = mrp ? Number(mrp) : null;
+  const previewPct =
+    mrpNum && priceNum > 0 && mrpNum > priceNum ? Math.round(((mrpNum - priceNum) / mrpNum) * 100) : null;
+
+  // Pricing/size/identifier fields shared by create and update. null clears a value.
+  function pricingPayload() {
+    return {
+      mrp: mrp ? Number(mrp) : null,
+      unit_value: unitValue ? Number(unitValue) : null,
+      unit: unit || null,
+      sku: sku.trim() || null,
+      barcode: barcode.trim() || null,
+      low_stock_threshold: lowAt === "" ? null : Number(lowAt),
+    };
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
+    if (mrpNum !== null && mrpNum < priceNum) {
+      setError("MRP can't be lower than the selling price. Selling above MRP isn't allowed for packaged goods.");
+      return;
+    }
+    if (!!unitValue !== !!unit) {
+      setError("Fill in both the pack size and its unit (for example 500 and g), or leave both empty.");
+      return;
+    }
+    setSaving(true);
     try {
       if (product) {
         await apiFetch(`/dashboard/products/${product.id}`, {
@@ -396,6 +446,7 @@ function ProductForm({
             category,
             price: Number(price),
             stock_qty: Number(stock),
+            ...pricingPayload(),
             attributes,
             images,
             // Only sent if this product is ALREADY part of a variant
@@ -413,6 +464,7 @@ function ProductForm({
             category,
             price: Number(price),
             stock_qty: Number(stock),
+            ...pricingPayload(),
             attributes,
             images,
             variant_of_product_id: variantOfId || null,
@@ -462,6 +514,73 @@ function ProductForm({
           required
           className="border border-gray-200 rounded-md px-3 py-2 text-sm bg-white"
         />
+      </div>
+
+      <div className="space-y-2 border-t border-gray-200 pt-3">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pricing, size &amp; identifiers (optional)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block text-xs text-gray-500">
+            MRP (₹) — printed on the pack
+            <input
+              type="number" step="0.01" min="0" value={mrp} onChange={(e) => setMrp(e.target.value)}
+              placeholder="Leave empty if none"
+              className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            />
+            <span className="block mt-1 text-[11px]">
+              {previewPct !== null ? (
+                <span className="text-emerald-700 font-medium">Customers will see {previewPct}% off (₹{mrpNum} → ₹{priceNum})</span>
+              ) : (
+                "The price above is what customers pay. Add an MRP to show a discount."
+              )}
+            </span>
+          </label>
+          <div className="block text-xs text-gray-500">
+            Pack size
+            <div className="mt-1 flex gap-2">
+              <input
+                type="number" step="any" min="0" value={unitValue} onChange={(e) => setUnitValue(e.target.value)}
+                placeholder="e.g. 500"
+                className="w-1/2 border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+              />
+              <select
+                value={unit} onChange={(e) => setUnit(e.target.value)}
+                className="w-1/2 border border-gray-200 rounded-md px-2 py-2 text-sm bg-white text-gray-900"
+              >
+                <option value="">Unit…</option>
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+                <option value="ml">ml</option>
+                <option value="l">L</option>
+                <option value="pcs">pcs</option>
+                <option value="pack">pack</option>
+                <option value="dozen">dozen</option>
+              </select>
+            </div>
+          </div>
+          <label className="block text-xs text-gray-500">
+            SKU (your own stock code)
+            <input
+              value={sku} onChange={(e) => setSku(e.target.value)} maxLength={40} placeholder="e.g. ATTA-5KG"
+              className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            />
+          </label>
+          <label className="block text-xs text-gray-500">
+            Barcode (EAN / UPC)
+            <input
+              value={barcode} onChange={(e) => setBarcode(e.target.value)} inputMode="numeric" placeholder="e.g. 8901234567890"
+              className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            />
+          </label>
+          <label className="block text-xs text-gray-500 sm:col-span-2">
+            Low-stock alert level for this product
+            <input
+              type="number" min="0" value={lowAt} onChange={(e) => setLowAt(e.target.value)}
+              placeholder="Empty = use your shop’s default"
+              className="mt-1 w-full sm:w-1/2 border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            />
+            <span className="block mt-1 text-[11px]">You’re notified once when stock falls to this many. 0 = only when sold out.</span>
+          </label>
+        </div>
       </div>
 
       <div>

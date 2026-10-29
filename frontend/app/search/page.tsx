@@ -1,3 +1,4 @@
+import { PriceTag } from "@/components/product/PriceTag";
 import { Suspense } from "react";
 import Link from "next/link";
 import { NearMeToggle } from "@/components/stores/NearMeToggle";
@@ -9,6 +10,10 @@ type Product = {
   id: string;
   name: string;
   price: string;
+  mrp?: string | null;
+  discount_percent?: number | null;
+  unit_label?: string | null;
+  stock_qty?: number;
   category: string;
   images: string[];
   rating_avg?: number;
@@ -148,7 +153,7 @@ export default async function SearchPage({
                   </p>
                 )}
                 <p className="text-xs text-gray-500">{p.category}</p>
-                <p className="text-sm font-semibold mt-1">₹{p.price}</p>
+                <PriceTag p={p} className="mt-1" />
                 {(p.rating_count ?? 0) > 0 && (
                   <p className="mt-0.5"><RatingBadge average={p.rating_avg ?? 0} count={p.rating_count ?? 0} /></p>
                 )}

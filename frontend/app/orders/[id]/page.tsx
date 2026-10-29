@@ -294,7 +294,8 @@ export default function OrderDetailPage() {
             <div key={item.id} className="border-b pb-3 space-y-2">
               <div className="flex justify-between text-sm">
                 <span>
-                  {item.product_name} × {item.quantity}
+                  {item.product_name}
+                  {item.unit_label ? ` (${item.unit_label})` : ""} × {item.quantity}
                 </span>
                 <span>₹{item.subtotal}</span>
               </div>
@@ -385,6 +386,9 @@ export default function OrderDetailPage() {
           <span>Total</span>
           <span>₹{order.total_amount}</span>
         </div>
+        {Number(order.savings_amount ?? 0) > 0 && (
+          <p className="text-xs text-emerald-700 text-right">You saved {inr(order.savings_amount)} on this order</p>
+        )}
       </div>
 
       {fulfilled && order.shop && (

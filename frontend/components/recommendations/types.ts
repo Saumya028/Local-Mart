@@ -6,6 +6,9 @@ export type RecoItem = {
   shop_id: string;
   name: string;
   price: string;
+  mrp?: string | null;
+  unit_label?: string | null;
+  discount_percent?: number | null;
   category: string;
   stock_qty: number;
   images: string[];

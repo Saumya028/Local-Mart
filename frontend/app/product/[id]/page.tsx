@@ -4,6 +4,9 @@ type VariantSummary = {
   id: string;
   variant_attributes: Record<string, string>;
   price: string;
+  mrp?: string | null;
+  unit_label?: string | null;
+  discount_percent?: number | null;
   stock_qty: number;
   is_active: boolean;
   thumbnail: string | null;
@@ -14,6 +17,10 @@ type ProductDetail = {
   name: string;
   description: string | null;
   price: string;
+  mrp?: string | null;
+  unit_label?: string | null;
+  unit_price_label?: string | null;
+  discount_percent?: number | null;
   category: string;
   stock_qty: number;
   attributes: Record<string, unknown>;
@@ -26,6 +33,7 @@ type ProductDetail = {
   rating_count?: number;
 };
 
+import { PriceTag } from "@/components/product/PriceTag";
 import Link from "next/link";
 import AddToCartButton from "@/components/AddToCartButton";
 import WishlistButton from "@/components/WishlistButton";
@@ -103,7 +111,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             )}
           </div>
 
-          <p className="text-2xl font-semibold">₹{product.price}</p>
+          <PriceTag p={product} size="lg" />
 
           {product.description && <p className="text-gray-600 text-sm">{product.description}</p>}
 

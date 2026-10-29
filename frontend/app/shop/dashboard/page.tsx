@@ -315,7 +315,7 @@ function ShopDashboard() {
         />
         <div className="flex-1 min-w-0">
           {selectedShopId && tab === "dashboard" && (
-            <DashboardTab shopId={selectedShopId} onGoToOrders={() => setTab("orders")} />
+            <DashboardTab shopId={selectedShopId} onGoToOrders={() => setTab("orders")} onGoToInventory={() => setTab("inventory")} />
           )}
           {selectedShopId && tab === "orders" && <OrdersTab shopId={selectedShopId} />}
           {selectedShopId && tab === "returns" && <ReturnsTab shopId={selectedShopId} />}

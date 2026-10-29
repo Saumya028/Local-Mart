@@ -59,6 +59,9 @@ export type OrderDetailItem = {
   product_name: string;
   quantity: number;
   unit_price: string;
+  // Snapshots from when it was ordered.
+  mrp?: string | null;
+  unit_label?: string | null;
   subtotal: string;
   returned_qty: number;
   // The customer's own review of this product, if they wrote one.
@@ -66,6 +69,8 @@ export type OrderDetailItem = {
 };
 
 export type OrderDetail = AccountOrder & {
+  // Rupees saved versus MRP on this order ("0.00" when none).
+  savings_amount?: string;
   items: OrderDetailItem[];
   delivered_at: string | null;
   delivery_proof_photo_url?: string | null;
@@ -158,6 +163,9 @@ export type WishlistProduct = {
   id: string;
   name: string;
   price: string;
+  mrp?: string | null;
+  discount_percent?: number | null;
+  unit_label?: string | null;
   images: string[];
   stock_qty: number;
   is_active: boolean;

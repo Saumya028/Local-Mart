@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 
+from decimal import Decimal
+
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,6 +28,22 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     price: Mapped[float] = mapped_column(Numeric(10, 2))
+    # Maximum Retail Price printed on the pack (optional). `price` above is
+    # always what the customer pays; MRP only drives the "X% off" display and
+    # must be >= price (DB check + API validation).
+    mrp: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # Pack size, e.g. 500 + "g", 1 + "l", 6 + "pcs" (both set or both empty).
+    unit_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The shop's own stock code, and the pack's barcode (EAN/UPC). Each is
+    # unique within a shop (partial unique indexes in migration 0026).
+    sku: Mapped[str | None] = mapped_column(String, nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Alert the owner when stock falls to this many. NULL = use the shop's default.
+    low_stock_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # What the owner was last alerted about: NULL (fine) | "low" | "out".
+    # Makes alerts fire once per drop, not once per sale (core/stock_alerts.py).
+    low_stock_state: Mapped[str | None] = mapped_column(String, nullable=True)
     category: Mapped[str] = mapped_column(String, index=True)
     stock_qty: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
@@ -51,3 +69,21 @@ class Product(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+    @property
+    def unit_label(self) -> str | None:
+        from app.core.product_pricing import unit_label
+
+        return unit_label(self.unit_value, self.unit)
+
+    @property
+    def discount_percent(self) -> int | None:
+        from app.core.product_pricing import discount_percent
+
+        return discount_percent(self.mrp, self.price)
+
+    @property
+    def unit_price_label(self) -> str | None:
+        from app.core.product_pricing import unit_price_label
+
+        return unit_price_label(self.price, self.unit_value, self.unit)

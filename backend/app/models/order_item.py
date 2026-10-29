@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, Numeric
+from sqlalchemy import ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,3 +27,7 @@ class OrderItem(Base):
     # product's price tomorrow, this row still shows what the customer
     # actually paid, which is what an order history or invoice needs.
     unit_price: Mapped[float] = mapped_column(Numeric(10, 2))
+    # Snapshots of what the customer saw when they ordered, so editing the
+    # product later can't rewrite history (savings shown, pack size).
+    mrp: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    unit_label: Mapped[str | None] = mapped_column(String, nullable=True)

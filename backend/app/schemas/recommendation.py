@@ -16,6 +16,9 @@ class RecoItem(BaseModel):
     shop_id: uuid.UUID
     name: str
     price: Decimal
+    mrp: Decimal | None = None
+    unit_label: str | None = None
+    discount_percent: int | None = None
     category: str
     stock_qty: int
     images: list = []

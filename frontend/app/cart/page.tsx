@@ -1,5 +1,6 @@
 "use client";
 
+import { PriceTag } from "@/components/product/PriceTag";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -17,7 +18,7 @@ const CART_ICON = (
 );
 
 type CartItem = {
-  product: { id: string; name: string; price: string; images: string[] };
+  product: { id: string; name: string; price: string; mrp?: string | null; discount_percent?: number | null; unit_label?: string | null; images: string[] };
   quantity: number;
   subtotal: string;
 };
@@ -149,7 +150,7 @@ export default function CartPage() {
                     <Link href={`/product/${item.product.id}`} className="font-medium hover:underline">
                       {item.product.name}
                     </Link>
-                    <p className="text-xs text-gray-400">₹{item.product.price} each</p>
+                    <PriceTag p={item.product} showStock={false} />
                   </div>
                 </div>
                 <div className="flex items-center gap-3">

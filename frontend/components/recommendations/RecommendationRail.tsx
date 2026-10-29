@@ -1,5 +1,6 @@
 "use client";
 
+import { PriceTag } from "@/components/product/PriceTag";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
@@ -103,7 +104,7 @@ export function RecommendationRail({
             </div>
             <div className="p-3 space-y-1">
               <p className="text-sm font-medium text-gray-900 line-clamp-2">{it.name}</p>
-              <p className="text-sm font-semibold text-gray-900">₹{Number(it.price).toLocaleString("en-IN")}</p>
+              <PriceTag p={it} showStock={false} />
               {it.rating_count ? (
                 <p className="text-xs text-amber-600">★ {Number(it.rating_avg).toFixed(1)} <span className="text-gray-400">({it.rating_count})</span></p>
               ) : null}

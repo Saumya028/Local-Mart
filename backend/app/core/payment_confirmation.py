@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.stock_alerts import sync_stock_alerts
 from app.models import Order, OrderItem, Payment, PlatformSettings, Product
 
 
@@ -54,12 +55,16 @@ async def cancel_order_and_release_stock(db: AsyncSession, order: Order) -> None
         return
     order.status = "cancelled"
     items = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+    released = []
     for item in items.scalars().all():
         await db.execute(
             update(Product)
             .where(Product.id == item.product_id)
             .values(stock_qty=Product.stock_qty + item.quantity)
         )
+        released.append(item.product_id)
+    # Stock came back: re-arm any low/out alert (silently — good news needs no ping).
+    await sync_stock_alerts(db, released, notify=False)
 
 
 async def platform_enabled_methods(db: AsyncSession) -> set[str]:

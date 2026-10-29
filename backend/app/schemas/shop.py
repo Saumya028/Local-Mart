@@ -143,6 +143,8 @@ class ShopUpdate(BaseModel):
     slot_length_minutes: int | None = None
     slot_capacity: int | None = Field(default=None, ge=1, le=500)
     slot_days_ahead: int | None = Field(default=None, ge=1, le=7)
+    # ---- inventory ---------------------------------------------------------
+    low_stock_threshold: int | None = Field(default=None, ge=0, le=100_000)
 
     @field_validator("contact_phone")
     @classmethod
@@ -301,3 +303,4 @@ class DashboardShopOut(ShopOut):
     closed_until: datetime | None = None
     closed_message: str | None = None
     slot_capacity: int = 5
+    low_stock_threshold: int = 5

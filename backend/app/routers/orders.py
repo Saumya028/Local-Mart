@@ -11,6 +11,8 @@ from app.core.cart import MAX_LINE_QTY
 from app.core.db import get_db
 from app.core.idempotency import idempotent
 from app.core.order_events import order_changed
+from app.core.stock_alerts import sync_stock_alerts
+from app.core.product_pricing import savings
 from app.core.order_timeline import load_timeline
 from app.core.order_status import CUSTOMER_CANCELABLE_FROM
 from app.core.payment_confirmation import (
@@ -235,6 +237,7 @@ async def checkout(
             delivery_address_snapshot = address.snapshot()
 
         created_orders: list[Order] = []
+        reserved_product_ids: list[uuid.UUID] = []
         grand_total = Decimal("0")
 
         for shop_id, items in items_by_shop.items():
@@ -270,6 +273,7 @@ async def checkout(
 
                 line_total = product.price * qty
                 order_total += line_total
+                reserved_product_ids.append(product.id)
                 db.add(
                     OrderItem(
                         id=uuid.uuid4(),
@@ -277,6 +281,10 @@ async def checkout(
                         product_id=product.id,
                         quantity=qty,
                         unit_price=product.price,
+                        # What the customer saw: so a later edit to the product
+                        # can't change the savings/pack size shown on this order.
+                        mrp=product.mrp,
+                        unit_label=product.unit_label,
                     )
                 )
 
@@ -299,6 +307,9 @@ async def checkout(
                 )
             )
 
+        # Tell the shop if this sale just pushed something under its low-stock
+        # line (best effort: never blocks the order).
+        await sync_stock_alerts(db, reserved_product_ids, notify=True)
         await db.flush()  # payments must be visible to the notification templates
         for order in created_orders:
             await order_changed(
@@ -497,6 +508,8 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
             "quantity": item.quantity,
             "unit_price": item.unit_price,
             "subtotal": item.unit_price * item.quantity,
+            "mrp": item.mrp,
+            "unit_label": item.unit_label,
             "returned_qty": int(returned_by_item.get(item.id, 0)),
             "review_id": review_by_product.get(item.product_id),
         }
@@ -508,6 +521,9 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
     data["shop_name"] = shop.name if shop else None
     data["item_count"] = sum(i["quantity"] for i in items)
     data["items"] = items
+    data["savings_amount"] = sum(
+        (savings(i["mrp"], i["unit_price"]) * i["quantity"] for i in items), Decimal("0.00")
+    )
     data["shop_review_id"] = shop_review_id
     payment = await get_payment(db, order.id)
     data["payment_method"] = payment.method if payment else None

@@ -115,6 +115,9 @@ class OrderItemOut(BaseModel):
     product_name: str
     quantity: int
     unit_price: Decimal
+    # What the customer saw when ordering (snapshots).
+    mrp: Decimal | None = None
+    unit_label: str | None = None
     subtotal: Decimal
     # How many units of this line item are already tied up in a
     # non-cancelled/non-rejected return or exchange request — lets the
@@ -133,6 +136,8 @@ class OrderDetailOut(OrderOut):
 
     shop: ShopOut | None = None
     items: list[OrderItemOut] = []
+    # Total rupees saved versus MRP on this order (0 when no MRPs were set).
+    savings_amount: Decimal = Decimal("0")
     payment: PaymentInfo | None = None
     # The customer's own review of this shop, if any.
     shop_review_id: uuid.UUID | None = None
@@ -169,6 +174,19 @@ class ChangePaymentMethodRequest(BaseModel):
     method: str
 
 
+class DashboardOrderItemOut(BaseModel):
+    """One ordered line as the shop sees it: what to pick and how many."""
+
+    id: uuid.UUID
+    product_id: uuid.UUID
+    product_name: str
+    variant_label: str | None = None
+    quantity: int
+    unit_price: Decimal
+    unit_label: str | None = None
+    subtotal: Decimal
+
+
 class DashboardOrderOut(OrderOut):
     """The seller-facing view of an order — adds who bought it, which the
     customer-facing OrderOut has no reason to expose to anyone but the
@@ -177,6 +195,7 @@ class DashboardOrderOut(OrderOut):
     buyer_email: str | None
     buyer_name: str | None = None
     item_count: int = 0
+    items: list[DashboardOrderItemOut] = []
     payer_reference: str | None = None
     payment_marked_at: datetime | None = None
 

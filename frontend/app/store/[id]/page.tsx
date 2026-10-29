@@ -1,3 +1,4 @@
+import { PriceTag } from "@/components/product/PriceTag";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import WishlistButton from "@/components/WishlistButton";
@@ -8,7 +9,7 @@ import { ShopInfoPanel, PublicShopInfo } from "@/components/shop/ShopInfoPanel";
 import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
 
 type Shop = PublicShopInfo & { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
-type Product = { id: string; name: string; price: string; category: string; images: string[]; rating_avg?: number; rating_count?: number };
+type Product = { id: string; name: string; price: string; mrp?: string | null; discount_percent?: number | null; unit_label?: string | null; stock_qty?: number; category: string; images: string[]; rating_avg?: number; rating_count?: number };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -89,7 +90,7 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
                 </div>
                 <Link prefetch={false} href={`/product/${p.id}`} className="block p-3">
                   <p className="text-sm font-medium text-gray-900 line-clamp-2">{p.name}</p>
-                  <p className="text-sm font-semibold text-gray-900 mt-1.5">₹{p.price}</p>
+                  <PriceTag p={p} className="mt-1.5" />
                   {(p.rating_count ?? 0) > 0 && (
                     <p className="mt-0.5"><RatingBadge average={p.rating_avg ?? 0} count={p.rating_count ?? 0} /></p>
                   )}

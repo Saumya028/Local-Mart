@@ -172,6 +172,8 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
   const [capacity, setCapacity] = useState(String(shop.slot_capacity ?? 5));
   const [daysAhead, setDaysAhead] = useState(String(shop.slot_days_ahead ?? 2));
 
+  const [lowStock, setLowStock] = useState(String(shop.low_stock_threshold ?? 5));
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -199,6 +201,7 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
         slot_length_minutes: Number(slotLen),
         slot_capacity: Number(capacity || 1),
         slot_days_ahead: Number(daysAhead || 1),
+        low_stock_threshold: Number(lowStock || 0),
       };
       // Only send the phone when there is one: a shop created before phone numbers
       // existed can still save its other settings, and a number can't be cleared.
@@ -373,6 +376,17 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
               {`(+ delivery) time from now, and only inside your opening hours.`}
             </p>
           )}
+        </div>
+      </Section>
+
+      <Section
+        title="Inventory alerts"
+        hint="You’re notified (bell + email) when a product’s stock falls to this many, and again when it sells out."
+      >
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Default low-stock level (units)" hint="0 = only tell me when something sells out. A product can override this when you edit it.">
+            <input type="number" min="0" max="100000" value={lowStock} onChange={(e) => setLowStock(e.target.value)} className={input} />
+          </Field>
         </div>
       </Section>
 

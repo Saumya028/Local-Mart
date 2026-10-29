@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 type Variant = {
+  unit_label?: string | null;
   id: string;
   variant_attributes: Record<string, string>;
   is_active: boolean;
@@ -55,6 +56,7 @@ export function VariantPicker({ currentId, variants }: { currentId: string; vari
                 <img src={v.thumbnail} alt="" className="w-5 h-5 rounded object-cover" />
               )}
               {label}
+              {v.unit_label && v.unit_label !== label && <span className="text-xs text-gray-400">{v.unit_label}</span>}
             </Link>
           );
         })}

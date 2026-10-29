@@ -21,10 +21,25 @@ function ChangeBadge({ pct, invert = false }: { pct: number | null; invert?: boo
   );
 }
 
-export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToOrders: () => void }) {
+export function DashboardTab({
+  shopId,
+  onGoToOrders,
+  onGoToInventory,
+}: {
+  shopId: string;
+  onGoToOrders: () => void;
+  onGoToInventory?: () => void;
+}) {
+  const [stock, setStock] = useState<{ low: number; out: number } | null>(null);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch(`/dashboard/products/stock-summary?shop_id=${shopId}`)
+      .then(setStock)
+      .catch(() => setStock(null)); // a banner is a nicety: never block the dashboard on it
+  }, [shopId]);
 
   useEffect(() => {
     setLoading(true);
@@ -43,6 +58,29 @@ export function DashboardTab({ shopId, onGoToOrders }: { shopId: string; onGoToO
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+      {stock && stock.low + stock.out > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+          <p className="text-sm text-amber-900">
+            {stock.out > 0 && (
+              <>
+                <strong>{stock.out}</strong> product{stock.out === 1 ? " is" : "s are"} sold out
+              </>
+            )}
+            {stock.out > 0 && stock.low > 0 && " and "}
+            {stock.low > 0 && (
+              <>
+                <strong>{stock.low}</strong> {stock.low === 1 ? "is" : "are"} running low
+              </>
+            )}
+            .
+          </p>
+          {onGoToInventory && (
+            <button onClick={onGoToInventory} className="text-sm font-medium text-amber-900 underline">
+              Review inventory
+            </button>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
           label="Today's Revenue"

@@ -142,6 +142,11 @@ class Shop(Base):
     # Minimum item subtotal for a delivery order. 0 = no minimum.
     min_order_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, server_default="0")
 
+    # ---- Inventory ------------------------------------------------------
+    # Owners are alerted when a product's stock falls to this many (a product
+    # can override it with its own `low_stock_threshold`).
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
+
     # ---- Timing: ETA and optional scheduled slots -----------------------
     prep_time_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     delivery_time_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")

@@ -3,7 +3,10 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Literal
+
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attribute_validation import validate_attributes
@@ -26,13 +29,14 @@ from app.core.payment_confirmation import (
 )
 from app.core.return_status import SHOP_ALLOWED_TRANSITIONS
 from app.core.return_events import return_changed
+from app.core.stock_alerts import effective_threshold, stock_state, sync_shop_stock_alerts, sync_stock_alerts
 from app.core.security import require_role
 from app.core.supabase_admin import (
     create_supabase_user,
     delete_supabase_user,
     update_supabase_user_password,
 )
-from app.core.utils import parse_uuid_or_404
+from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
 from app.models import Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
 from app.schemas.dashboard import (
     AnalyticsOut,
@@ -43,7 +47,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, EtaUpdate, OrderStatusUpdate
 from app.schemas.notification import OrderEventOut
-from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
+from app.schemas.product import ProductCreate, ProductDashboardOut, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
 from app.schemas.staff import StaffCreate, StaffOut, StaffUpdate
@@ -279,6 +283,9 @@ async def update_my_shop(
 
     for key, value in updates.items():
         setattr(shop, key, value)
+    if "low_stock_threshold" in updates:
+        await db.flush()
+        await sync_shop_stock_alerts(db, shop.id, notify=False)
 
     await db.commit()
     await db.refresh(shop)
@@ -287,7 +294,39 @@ async def update_my_shop(
     return shop
 
 
-@router.post("/products", response_model=ProductOut)
+def _dashboard_product(product: Product, shop_default: int) -> ProductDashboardOut:
+    out = ProductDashboardOut.model_validate(product)
+    threshold = effective_threshold(product, shop_default)
+    out.effective_low_stock_threshold = threshold
+    out.stock_status = stock_state(product.stock_qty, threshold) or "ok"
+    return out
+
+
+def _integrity_message(exc: IntegrityError) -> str:
+    """Turn a database constraint failure into something an owner can act on."""
+    text = str(exc.orig)
+    if "ix_products_shop_sku" in text:
+        return "Another product in your shop already uses that SKU"
+    if "ix_products_shop_barcode" in text:
+        return "Another product in your shop already has that barcode"
+    if "ck_products_mrp_not_below_price" in text:
+        return "MRP can't be lower than the selling price"
+    return "That change conflicts with an existing product"
+
+
+def _check_pricing(price, mrp, unit_value, unit) -> None:
+    """Rules that depend on several fields together (checked against the
+    product's resulting values, since updates are partial)."""
+    if mrp is not None and mrp < price:
+        raise HTTPException(
+            status_code=400,
+            detail="MRP can't be lower than the selling price — raise the MRP or remove it",
+        )
+    if (unit_value is None) != (unit is None):
+        raise HTTPException(status_code=400, detail="Give both the pack size and its unit (e.g. 500 and g), or neither")
+
+
+@router.post("/products", response_model=ProductDashboardOut)
 async def create_product(
     payload: ProductCreate,
     user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
@@ -336,29 +375,78 @@ async def create_product(
         **product_data,
     )
     db.add(product)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=_integrity_message(exc)) from exc
+    # Opening stock may already be at/below the alert level — record the state
+    # quietly (the owner is the one who just typed that number).
+    await sync_stock_alerts(db, [product.id], notify=False)
     await db.commit()
     await db.refresh(product)
 
     await invalidate("categories:list")
-    return product
+    return _dashboard_product(product, shop.low_stock_threshold)
 
 
-@router.get("/products", response_model=list[ProductOut])
+@router.get("/products", response_model=list[ProductDashboardOut])
 async def my_products(
     shop_id: uuid.UUID | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=100, description="Name, SKU, or an exact barcode"),
+    stock: Literal["all", "low", "out"] = Query(default="all", description="Only products at/below their alert level, or sold out"),
     user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ):
     accessible_shop_ids = await _get_accessible_shop_ids(user, db)
 
-    stmt = select(Product)
+    stmt = select(Product, Shop.low_stock_threshold).join(Shop, Shop.id == Product.shop_id)
     if shop_id is not None:
         stmt = stmt.where(Product.shop_id == shop_id)
     if accessible_shop_ids is not None:
         stmt = stmt.where(Product.shop_id.in_(accessible_shop_ids))
+    if q and q.strip():
+        pattern = f"%{escape_like(q.strip())}%"
+        stmt = stmt.where(
+            Product.name.ilike(pattern, escape=LIKE_ESCAPE_CHAR)
+            | Product.sku.ilike(pattern, escape=LIKE_ESCAPE_CHAR)
+            | (Product.barcode == q.strip())
+        )
+    level = func.coalesce(Product.low_stock_threshold, Shop.low_stock_threshold)
+    if stock == "out":
+        stmt = stmt.where(Product.is_active.is_(True), Product.stock_qty <= 0)
+    elif stock == "low":
+        stmt = stmt.where(Product.is_active.is_(True), Product.stock_qty > 0, Product.stock_qty <= level)
+        # Most urgent first.
+    order = (Product.stock_qty.asc(), Product.name) if stock != "all" else (Product.created_at.desc(),)
 
-    result = await db.execute(stmt.order_by(Product.created_at.desc()))
-    return result.scalars().all()
+    rows = (await db.execute(stmt.order_by(*order))).all()
+    return [_dashboard_product(product, shop_default) for product, shop_default in rows]
+
+
+@router.get("/products/stock-summary")
+async def stock_summary(
+    shop_id: uuid.UUID = Query(...),
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many ACTIVE products are low or sold out — for the dashboard
+    banner and the Inventory tab header."""
+    accessible = await _get_accessible_shop_ids(user, db)
+    if accessible is not None and shop_id not in accessible:
+        raise HTTPException(status_code=403, detail="You don't have access to this shop")
+    shop = await db.get(Shop, shop_id)
+    if shop is None:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    level = func.coalesce(Product.low_stock_threshold, shop.low_stock_threshold)
+    active = (Product.shop_id == shop_id, Product.is_active.is_(True))
+    out = (await db.execute(select(func.count()).select_from(Product).where(*active, Product.stock_qty <= 0))).scalar_one()
+    low = (
+        await db.execute(
+            select(func.count()).select_from(Product).where(*active, Product.stock_qty > 0, Product.stock_qty <= level)
+        )
+    ).scalar_one()
+    return {"low": low, "out": out, "default_threshold": shop.low_stock_threshold}
 
 
 async def _get_owned_product_or_403(product_id: str, user: Profile, db: AsyncSession) -> Product:
@@ -377,7 +465,7 @@ async def _get_owned_product_or_403(product_id: str, user: Profile, db: AsyncSes
     return product
 
 
-@router.put("/products/{product_id}", response_model=ProductOut)
+@router.put("/products/{product_id}", response_model=ProductDashboardOut)
 async def update_product(
     product_id: str,
     payload: ProductUpdate,
@@ -397,18 +485,34 @@ async def update_product(
         merged_attributes = updates.get("attributes", product.attributes)
         await validate_attributes(db, "product", merged_category, merged_attributes)
 
+    _check_pricing(
+        updates.get("price", product.price),
+        updates["mrp"] if "mrp" in updates else product.mrp,
+        updates["unit_value"] if "unit_value" in updates else product.unit_value,
+        updates["unit"] if "unit" in updates else product.unit,
+    )
+
     for key, value in updates.items():
         setattr(product, key, value)
 
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=_integrity_message(exc)) from exc
+    # Stock, threshold or active status may have crossed the alert line. The
+    # owner made this change themselves, so update the state without pinging them.
+    await sync_stock_alerts(db, [product.id], notify=False)
     await db.commit()
     await db.refresh(product)
+    shop_default = (await db.execute(select(Shop.low_stock_threshold).where(Shop.id == product.shop_id))).scalar_one()
 
     # The customer-facing product page AND the category counts are both
     # cached — a price/stock/active-status change here must not stay
     # invisible to shoppers for up to a minute just because Redis hasn't
     # naturally expired the old value yet.
     await invalidate(f"product:{product_id}", "categories:list")
-    return product
+    return _dashboard_product(product, shop_default)
 
 
 @router.delete("/products/{product_id}")
@@ -427,14 +531,54 @@ async def deactivate_product(
     """
     product = await _get_owned_product_or_403(product_id, user, db)
     product.is_active = False
+    await sync_stock_alerts(db, [product.id], notify=False)  # a hidden product raises no alerts
     await db.commit()
 
     await invalidate(f"product:{product_id}", "categories:list")
     return {"id": product_id, "deactivated": True}
 
 
-def _dashboard_order_dict(order: Order, buyer_email, buyer_name, item_count, payment: Payment | None) -> dict:
+async def _load_order_items(db: AsyncSession, order_ids: list) -> dict:
+    """Ordered lines (product name + quantity) for the given orders, keyed
+    by order id — what the shop needs to know what to pack."""
+    grouped: dict = {}
+    if not order_ids:
+        return grouped
+    rows = await db.execute(
+        select(OrderItem, Product)
+        .join(Product, Product.id == OrderItem.product_id)
+        .where(OrderItem.order_id.in_(order_ids))
+        .order_by(Product.name)
+    )
+    for item, product in rows.all():
+        # Pack size: the snapshot taken at checkout, else the product's
+        # current one (older orders have no snapshot).
+        unit_label = item.unit_label or product.unit_label
+        # Variant details (size, colour, flavour...) so two variants that
+        # share a name can be told apart when packing.
+        variant = ", ".join(
+            str(v) for v in (product.variant_attributes or {}).values() if v not in (None, "")
+        ) or None
+        grouped.setdefault(item.order_id, []).append(
+            {
+                "id": item.id,
+                "product_id": item.product_id,
+                "product_name": product.name,
+                "variant_label": variant,
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "unit_label": unit_label,
+                "subtotal": item.unit_price * item.quantity,
+            }
+        )
+    return grouped
+
+
+def _dashboard_order_dict(
+    order: Order, buyer_email, buyer_name, item_count, payment: Payment | None, items: list | None = None
+) -> dict:
     return {
+        "items": items or [],
         "id": order.id,
         "shop_id": order.shop_id,
         "status": order.status,
@@ -468,7 +612,10 @@ async def _order_response(db: AsyncSession, order: Order) -> dict:
         select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(OrderItem.order_id == order.id)
     )
     payment = await get_payment(db, order.id)
-    return _dashboard_order_dict(order, buyer_email, buyer_name, item_count_result.scalar_one(), payment)
+    items = (await _load_order_items(db, [order.id])).get(order.id, [])
+    return _dashboard_order_dict(
+        order, buyer_email, buyer_name, item_count_result.scalar_one(), payment, items
+    )
 
 
 async def _load_manageable_order(order_id: str, user: Profile, db: AsyncSession) -> Order:
@@ -509,9 +656,13 @@ async def incoming_orders(
         stmt = stmt.where(Order.shop_id.in_(accessible_shop_ids))
 
     result = await db.execute(stmt.order_by(Order.created_at.desc()))
+    rows = result.all()
+    items_by_order = await _load_order_items(db, [r[0].id for r in rows])
     return [
-        _dashboard_order_dict(order, buyer_email, buyer_name, item_count, payment)
-        for order, buyer_email, buyer_name, item_count, payment in result.all()
+        _dashboard_order_dict(
+            order, buyer_email, buyer_name, item_count, payment, items_by_order.get(order.id, [])
+        )
+        for order, buyer_email, buyer_name, item_count, payment in rows
     ]
 
 
@@ -1135,6 +1286,7 @@ async def update_return_status(
             )
             db.add(new_order)
             await db.flush()
+            exchange_product = await db.get(Product, rr.exchange_product_id)
             db.add(
                 OrderItem(
                     id=uuid.uuid4(),
@@ -1142,6 +1294,8 @@ async def update_return_status(
                     product_id=rr.exchange_product_id,
                     quantity=rr.quantity,
                     unit_price=exchange_price,
+                    mrp=exchange_product.mrp if exchange_product else None,
+                    unit_label=exchange_product.unit_label if exchange_product else None,
                 )
             )
             rr.new_order_id = new_order.id
@@ -1151,6 +1305,14 @@ async def update_return_status(
         rr.shop_note = payload.shop_note
     if payload.status in ("rejected", "completed"):
         rr.resolved_at = datetime.now(timezone.utc)
+
+    if payload.status == "completed":
+        returned_pid = (
+            await db.execute(select(OrderItem.product_id).where(OrderItem.id == rr.order_item_id))
+        ).scalar_one_or_none()
+        # The returned item went back on the shelf (re-arms its alert); an exchange
+        # replacement came off it (may trip one).
+        await sync_stock_alerts(db, [p for p in (returned_pid, rr.exchange_product_id) if p is not None], notify=True)
 
     await return_changed(db, rr, f"return_{payload.status}", actor=user, note=payload.shop_note)
     if new_order is not None:
