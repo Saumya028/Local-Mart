@@ -61,6 +61,7 @@ type QuoteShop = {
   fulfillment: "delivery" | "pickup";
   subtotal: string;
   delivery_fee: string;
+  tax?: string; // GST, added on top of the item prices
   total: string;
   min_order_amount: string;
   min_order_shortfall: string;
@@ -411,7 +412,10 @@ export default function CheckoutPage() {
                         )}
 
                         <dl className="text-xs text-gray-600 space-y-0.5">
-                          <div className="flex justify-between"><dt>Items</dt><dd>{inr(qs.subtotal)}</dd></div>
+                          <div className="flex justify-between"><dt>Items (excl. GST)</dt><dd>{inr(qs.subtotal)}</dd></div>
+                          {Number(qs.tax ?? 0) > 0 && (
+                            <div className="flex justify-between"><dt>GST</dt><dd>{inr(qs.tax)}</dd></div>
+                          )}
                           {qs.fulfillment === "delivery" && (
                             <div className="flex justify-between">
                               <dt>Delivery</dt>

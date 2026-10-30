@@ -2,14 +2,16 @@ import uuid
 from decimal import Decimal
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import cart as cart_store
 from app.core.cart import MAX_LINE_QTY
 from app.core.db import get_db
+from app.core.gst import line_tax
 from app.core.idempotency import idempotent
+from app.core.invoice import build_invoice_data, next_invoice_number, render_invoice_pdf
 from app.core.order_events import order_changed
 from app.core.stock_alerts import sync_stock_alerts
 from app.core.product_pricing import savings
@@ -258,6 +260,7 @@ async def checkout(
             await db.flush()  # so order.id is usable as a foreign key on the OrderItems below
 
             order_total = Decimal("0")
+            order_tax = Decimal("0.00")
             for product, qty in items:
                 stmt = (
                     update(Product)
@@ -273,6 +276,7 @@ async def checkout(
 
                 line_total = product.price * qty
                 order_total += line_total
+                order_tax += line_tax(product.price, qty, product.gst_rate)
                 reserved_product_ids.append(product.id)
                 db.add(
                     OrderItem(
@@ -285,14 +289,22 @@ async def checkout(
                         # can't change the savings/pack size shown on this order.
                         mrp=product.mrp,
                         unit_label=product.unit_label,
+                        gst_rate=product.gst_rate or 0,
+                        hsn_code=product.hsn_code,
                     )
                 )
 
             # The fee is decided once, now, and stored on the order — a later
             # change to the shop's pricing can never alter this order.
             order.subtotal_amount = order_total
+            order.tax_amount = order_tax
             order.delivery_fee = plans[shop_id].delivery_fee
-            order.total_amount = order_total + plans[shop_id].delivery_fee
+            order.total_amount = order_total + order_tax + plans[shop_id].delivery_fee
+            order.invoice_number = await next_invoice_number(db, shops_by_id[shop_id], now)
+            # Business buyers: snapshot their GSTIN so the invoice is a proper B2B one.
+            if user.gstin:
+                order.buyer_gstin = user.gstin
+                order.buyer_business_name = user.business_name
             grand_total += order.total_amount
             created_orders.append(order)
 
@@ -370,7 +382,9 @@ async def quote_order(
         shop = shops[shop_id]
         fulfillment = "pickup" if shop_id in pickup and shop.pickup_enabled and shop.address_line1 else "delivery"
         subtotal = sum((p.price * q for p, q in items), Decimal("0"))
+        tax = sum((line_tax(p.price, q, p.gst_rate) for p, q in items), Decimal("0.00"))
         plan = await plan_shop_order(db, shop, subtotal, fulfillment, payload.slots.get(shop_id), now=now)
+        plan.total += tax
         grand_total += plan.total
         can_checkout = can_checkout and not plan.issues
         slot = plan.slot
@@ -382,6 +396,7 @@ async def quote_order(
                 "fulfillment": fulfillment,
                 "subtotal": str(plan.subtotal),
                 "delivery_fee": str(plan.delivery_fee),
+                "tax": str(tax),
                 "total": str(plan.total),
                 "min_order_amount": str(plan.min_order_amount),
                 "min_order_shortfall": str(plan.min_order_shortfall),
@@ -510,6 +525,7 @@ async def _build_order_detail(db: AsyncSession, order: Order) -> dict:
             "subtotal": item.unit_price * item.quantity,
             "mrp": item.mrp,
             "unit_label": item.unit_label,
+            "gst_rate": item.gst_rate,
             "returned_qty": int(returned_by_item.get(item.id, 0)),
             "review_id": review_by_product.get(item.product_id),
         }
@@ -542,6 +558,22 @@ async def get_order(
     item, and — for the owner only — how to pay the shop directly."""
     order = await _load_owned_order(db, order_id, user)
     return await _build_order_detail(db, order)
+
+
+@router.get("/orders/{order_id}/invoice")
+async def order_invoice(
+    order_id: str,
+    user: Profile = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The customer's GST invoice for their own order, as a PDF."""
+    order = await _load_owned_order(db, order_id, user)
+    inv = await build_invoice_data(db, order)
+    return Response(
+        render_invoice_pdf(inv),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{inv.number.replace("/", "-")}.pdf"'},
+    )
 
 
 @router.get("/orders/{order_id}/timeline", response_model=list[OrderEventOut])

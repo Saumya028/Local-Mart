@@ -174,7 +174,10 @@ export default function CartPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4">
-            <p className="text-lg font-semibold">Total: ₹{total}</p>
+            <div>
+              <p className="text-lg font-semibold">Total: ₹{total}</p>
+              <p className="text-xs text-gray-400">Excluding GST — added at checkout</p>
+            </div>
             <button
               onClick={() => router.push("/checkout")}
               className="bg-blue-600 text-white rounded-md px-6 py-2 text-sm font-medium"

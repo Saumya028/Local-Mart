@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+
 from typing import Literal
 
 from sqlalchemy import func, select, update
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import invalidate
+from app.core.invoice import build_invoice_data, render_invoice_pdf
 from app.core.db import get_db
 from app.core.order_events import order_changed
 from app.core.order_timeline import load_timeline
@@ -47,7 +49,8 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, EtaUpdate, OrderStatusUpdate
 from app.schemas.notification import OrderEventOut
-from app.schemas.product import ProductCreate, ProductDashboardOut, ProductUpdate
+from app.core.product_csv import CsvError, parse_csv, validate_row
+from app.schemas.product import ProductCreate, ProductDashboardOut, ProductImportRequest, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
 from app.schemas.staff import StaffCreate, StaffOut, StaffUpdate
@@ -368,6 +371,8 @@ async def create_product(
         variant_attributes = payload.variant_attributes
 
     product_data = payload.model_dump(exclude={"variant_of_product_id", "variant_attributes"})
+    if product_data.get("gst_rate") is None:
+        product_data.pop("gst_rate", None)  # column default: 0%
     product = Product(
         id=uuid.uuid4(),
         variant_group_id=variant_group_id,
@@ -492,6 +497,9 @@ async def update_product(
         updates["unit"] if "unit" in updates else product.unit,
     )
 
+    if "gst_rate" in updates and updates["gst_rate"] is None:
+        del updates["gst_rate"]  # not nullable — omit to leave unchanged
+
     for key, value in updates.items():
         setattr(product, key, value)
 
@@ -513,6 +521,133 @@ async def update_product(
     # naturally expired the old value yet.
     await invalidate(f"product:{product_id}", "categories:list")
     return _dashboard_product(product, shop_default)
+
+
+@router.post("/products/import")
+async def import_products_csv(
+    payload: ProductImportRequest,
+    user: Profile = Depends(require_role("shop_owner", "admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk create/update products from a CSV (see app/core/product_csv.py for
+    the columns). Matching is by SKU within this shop: existing SKU -> update
+    (blank cells leave a field unchanged), new SKU -> create.
+
+    All-or-nothing: if ANY row is invalid nothing is saved and every problem
+    is reported with its line number, so the file can be fixed and re-sent.
+    With dry_run (the default) nothing is ever saved — it's the preview step.
+    """
+    shop = await db.get(Shop, payload.shop_id)
+    if shop is None or not _user_can_manage_shop(shop, user):
+        raise HTTPException(status_code=403, detail="You don't have access to this shop")
+    _require_approved_shop(shop)
+
+    try:
+        columns, rows = parse_csv(payload.csv_text)
+    except CsvError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = {
+        (p.sku or "").lower(): p
+        for p in (await db.execute(select(Product).where(Product.shop_id == shop.id, Product.sku.is_not(None)))).scalars()
+    }
+    barcode_owner = {
+        b: (sku or "").lower()
+        for b, sku in (
+            await db.execute(select(Product.barcode, Product.sku).where(Product.shop_id == shop.id, Product.barcode.is_not(None)))
+        ).all()
+    }
+
+    errors: list[dict] = []
+    plan: list[tuple[str, Product | None, dict]] = []
+    seen_skus: dict[str, int] = {}
+    seen_barcodes: dict[str, str] = {}
+    for line, raw in rows:
+        sku_text = raw.get("sku", "")
+        key = sku_text.strip().lower()
+        problems: list[str] = []
+        if key and key in seen_skus:
+            problems.append(f"SKU '{sku_text}' already appears on line {seen_skus[key]} of this file")
+        if key:
+            seen_skus.setdefault(key, line)
+        product = existing.get(key)
+        clean, row_errors = validate_row(raw, shop_id=shop.id, exists=product is not None)
+        problems += row_errors
+        if clean is not None:
+            barcode = clean.get("barcode")
+            if barcode:
+                owner = barcode_owner.get(barcode)
+                if (owner is not None and owner != key) or (seen_barcodes.get(barcode, key) != key):
+                    problems.append(f"Barcode {barcode} is already used by another product")
+                seen_barcodes.setdefault(barcode, key)
+            if product is not None:
+                try:
+                    _check_pricing(
+                        clean.get("price", product.price),
+                        clean["mrp"] if "mrp" in clean else product.mrp,
+                        clean["unit_value"] if "unit_value" in clean else product.unit_value,
+                        clean["unit"] if "unit" in clean else product.unit,
+                    )
+                except HTTPException as exc:
+                    problems.append(str(exc.detail))
+                if clean.get("category") and clean["category"] != product.category:
+                    try:
+                        await validate_attributes(db, "product", clean["category"], product.attributes or {})
+                    except HTTPException as exc:
+                        problems += exc.detail.get("attribute_errors", ["Category needs extra details"])
+            else:
+                try:
+                    await validate_attributes(db, "product", clean["category"], {})
+                except HTTPException as exc:
+                    problems += [
+                        f"{m} — add this product in the product form instead"
+                        for m in exc.detail.get("attribute_errors", [])
+                    ]
+        if problems:
+            errors.append({"line": line, "sku": sku_text or None, "messages": problems})
+        elif clean is not None:
+            plan.append(("update" if product is not None else "create", product, clean))
+
+    to_create = sum(1 for a, _, _ in plan if a == "create")
+    to_update = len(plan) - to_create
+    result = {
+        "columns": [c for c in columns if not c.startswith("?")],
+        "ignored_columns": [c[1:] for c in columns if c.startswith("?")],
+        "total_rows": len(rows),
+        "to_create": to_create,
+        "to_update": to_update,
+        "errors": errors,
+        "applied": False,
+        "preview": [
+            {"sku": c["sku"], "action": a, "name": c.get("name") or (p.name if p else None)} for a, p, c in plan[:15]
+        ],
+    }
+    if errors or payload.dry_run or not plan:
+        return result
+
+    touched: list[uuid.UUID] = []
+    try:
+        for action, product, clean in plan:
+            if action == "update":
+                for k, v in clean.items():
+                    if k != "sku":
+                        setattr(product, k, v)
+                touched.append(product.id)
+            else:
+                data = {k: v for k, v in clean.items() if v is not None}
+                new = Product(id=uuid.uuid4(), shop_id=shop.id, **data)
+                db.add(new)
+                touched.append(new.id)
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=_integrity_message(exc)) from exc
+    await sync_stock_alerts(db, touched, notify=False)
+    await db.commit()
+    await invalidate("categories:list", *[f"product:{pid}" for pid in touched])
+    result["applied"] = True
+    return result
 
 
 @router.delete("/products/{product_id}")
@@ -585,6 +720,8 @@ def _dashboard_order_dict(
         "fulfillment_type": order.fulfillment_type,
         "total_amount": order.total_amount,
         "subtotal_amount": order.subtotal_amount,
+        "tax_amount": order.tax_amount,
+        "invoice_number": order.invoice_number,
         "delivery_fee": order.delivery_fee,
         "eta_at": order.eta_at,
         "slot_start": order.slot_start,
@@ -664,6 +801,22 @@ async def incoming_orders(
         )
         for order, buyer_email, buyer_name, item_count, payment in rows
     ]
+
+
+@router.get("/orders/{order_id}/invoice")
+async def shop_order_invoice(
+    order_id: str,
+    user: Profile = Depends(require_role("shop_owner", "admin", *STAFF_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """The GST invoice for an order, as a PDF — for the shop that sold it."""
+    order = await _load_manageable_order(order_id, user, db)
+    inv = await build_invoice_data(db, order)
+    return Response(
+        render_invoice_pdf(inv),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{inv.number.replace("/", "-")}.pdf"'},
+    )
 
 
 @router.patch("/orders/{order_id}/status", response_model=DashboardOrderOut)

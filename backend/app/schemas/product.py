@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.gst import GST_RATES
 from app.core.product_pricing import UNITS, clean_barcode, clean_sku
 from app.schemas.shop import ShopOut
 
@@ -29,6 +30,8 @@ class ProductOut(BaseModel):
     unit_label: str | None = None
     discount_percent: int | None = None
     unit_price_label: str | None = None
+    # GST percent ADDED ON TOP of `price` at checkout (prices exclude GST).
+    gst_rate: Decimal = Decimal("0")
     category: str
     stock_qty: int
     attributes: dict
@@ -48,6 +51,7 @@ class ProductDashboardOut(ProductOut):
 
     sku: str | None = None
     barcode: str | None = None
+    hsn_code: str | None = None
     low_stock_threshold: int | None = None
     # The threshold actually in force (the product's own, else the shop's).
     effective_low_stock_threshold: int = 5
@@ -97,6 +101,25 @@ class ProductDetailOut(ProductOut):
     attribute_labels: dict[str, str] = {}
 
 
+def _check_gst_rate(v):
+    if v is None:
+        return None
+    if Decimal(str(v)) not in GST_RATES:
+        raise ValueError("GST rate must be one of " + ", ".join(f"{r.normalize():f}" for r in GST_RATES) + " (%)")
+    return Decimal(str(v))
+
+
+def _check_hsn(v: str | None) -> str | None:
+    if v is None:
+        return None
+    v = v.strip().replace(" ", "")
+    if not v:
+        return None
+    if not (v.isdigit() and len(v) in (4, 6, 8)):
+        raise ValueError("HSN code must be 4, 6 or 8 digits")
+    return v
+
+
 def _check_unit(v: str | None) -> str | None:
     if v is None:
         return None
@@ -138,6 +161,19 @@ class ProductCreate(BaseModel):
     sku: str | None = None
     barcode: str | None = None
     low_stock_threshold: int | None = Field(default=None, ge=0, le=100_000)
+    # GST (prices exclude GST). Omit on create = 0% (exempt/nil-rated).
+    gst_rate: Decimal | None = None
+    hsn_code: str | None = None
+
+    @field_validator("gst_rate")
+    @classmethod
+    def _gst_rate(cls, v):
+        return _check_gst_rate(v)
+
+    @field_validator("hsn_code")
+    @classmethod
+    def _hsn(cls, v):
+        return _check_hsn(v)
 
     @field_validator("unit")
     @classmethod
@@ -184,6 +220,19 @@ class ProductUpdate(BaseModel):
     sku: str | None = None
     barcode: str | None = None
     low_stock_threshold: int | None = Field(default=None, ge=0, le=100_000)
+    # GST (prices exclude GST). Omit on create = 0% (exempt/nil-rated).
+    gst_rate: Decimal | None = None
+    hsn_code: str | None = None
+
+    @field_validator("gst_rate")
+    @classmethod
+    def _gst_rate(cls, v):
+        return _check_gst_rate(v)
+
+    @field_validator("hsn_code")
+    @classmethod
+    def _hsn(cls, v):
+        return _check_hsn(v)
 
     @field_validator("unit")
     @classmethod
@@ -199,3 +248,12 @@ class ProductUpdate(BaseModel):
     @classmethod
     def _barcode(cls, v):
         return clean_barcode(v)
+
+
+class ProductImportRequest(BaseModel):
+    """Bulk upload: the CSV file's text. `dry_run` validates and reports what
+    WOULD happen without saving anything."""
+
+    shop_id: uuid.UUID
+    csv_text: str = Field(max_length=3_000_000)
+    dry_run: bool = True

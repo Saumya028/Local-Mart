@@ -173,6 +173,8 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
   const [daysAhead, setDaysAhead] = useState(String(shop.slot_days_ahead ?? 2));
 
   const [lowStock, setLowStock] = useState(String(shop.low_stock_threshold ?? 5));
+  const [gstin, setGstin] = useState(shop.gstin ?? "");
+  const [legalName, setLegalName] = useState(shop.legal_name ?? "");
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -202,6 +204,8 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
         slot_capacity: Number(capacity || 1),
         slot_days_ahead: Number(daysAhead || 1),
         low_stock_threshold: Number(lowStock || 0),
+        gstin: gstin.trim().toUpperCase(), // "" clears it
+        legal_name: legalName.trim(),
       };
       // Only send the phone when there is one: a shop created before phone numbers
       // existed can still save its other settings, and a number can't be cleared.
@@ -377,6 +381,30 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
             </p>
           )}
         </div>
+      </Section>
+
+      <Section
+        title="GST & invoices"
+        hint="Printed on the PDF invoice customers (and you) can download for every order. Leave the GSTIN empty if you aren’t GST-registered."
+      >
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="GSTIN" hint="15 characters, e.g. 27AAPFU0939F1ZV. The check digit is validated.">
+            <input
+              value={gstin}
+              onChange={(e) => setGstin(e.target.value.toUpperCase())}
+              maxLength={15}
+              placeholder="Not registered"
+              className={input + " font-mono tracking-wide"}
+            />
+          </Field>
+          <Field label="Legal / trade name on invoices" hint={`Empty = “${shop.name}”.`}>
+            <input value={legalName} onChange={(e) => setLegalName(e.target.value)} maxLength={150} className={input} />
+          </Field>
+        </div>
+        <p className="text-xs text-gray-500">
+          Your product prices are <b>excluding GST</b>: the GST rate you set on each product is added at checkout. Invoices
+          use your shop address and show CGST + SGST (or IGST when a business buyer’s GSTIN is in another state).
+        </p>
       </Section>
 
       <Section

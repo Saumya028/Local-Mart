@@ -7,6 +7,8 @@ export type PriceFields = {
   unit_label?: string | null;
   unit_price_label?: string | null;
   stock_qty?: number;
+  // GST percent added on top of `price` at checkout (prices exclude GST).
+  gst_rate?: string | number | null;
 };
 
 /**
@@ -45,6 +47,9 @@ export function PriceTag({
           </>
         )}
       </div>
+      {Number(p.gst_rate ?? 0) > 0 && (
+        <p className="text-[11px] text-gray-400 mt-0.5">+ {Number(p.gst_rate)}% GST</p>
+      )}
       {(p.unit_label || (size === "lg" && p.unit_price_label)) && (
         <p className="text-xs text-gray-500 mt-0.5">
           {p.unit_label}

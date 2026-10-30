@@ -145,6 +145,19 @@ class ShopUpdate(BaseModel):
     slot_days_ahead: int | None = Field(default=None, ge=1, le=7)
     # ---- inventory ---------------------------------------------------------
     low_stock_threshold: int | None = Field(default=None, ge=0, le=100_000)
+    # ---- GST / invoicing (blank clears) --------------------------------------
+    gstin: str | None = None
+    legal_name: str | None = Field(default=None, max_length=150)
+
+    @field_validator("gstin")
+    @classmethod
+    def _gstin(cls, v: str | None) -> str | None:
+        return cv.validate_gstin(v)
+
+    @field_validator("legal_name")
+    @classmethod
+    def _legal_name(cls, v: str | None) -> str | None:
+        return (v.strip() or None) if v else None
 
     @field_validator("contact_phone")
     @classmethod
@@ -304,3 +317,5 @@ class DashboardShopOut(ShopOut):
     closed_message: str | None = None
     slot_capacity: int = 5
     low_stock_threshold: int = 5
+    gstin: str | None = None
+    legal_name: str | None = None

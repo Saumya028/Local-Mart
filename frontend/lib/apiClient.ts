@@ -44,3 +44,27 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   return res.json();
 }
+
+/**
+ * Fetches a file (e.g. a PDF invoice) from the backend with the auth header
+ * and hands it to the browser as a download. apiFetch() can't be used for
+ * this — it always parses the response as JSON.
+ */
+export async function apiDownload(path: string, fallbackName: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const name = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}

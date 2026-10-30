@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch } from "@/lib/apiClient";
+import { apiDownload, apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { uploadDeliveryProof } from "@/lib/deliveryProofUpload";
 import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
@@ -31,6 +31,24 @@ const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
 // Mirrors backend SHOP_CANCELABLE_FROM — a shop can cancel any time
 // before the order leaves for delivery / is ready for pickup.
 const SHOP_CANCELABLE = new Set(["confirmed", "preparing", "packing"]);
+
+function InvoiceLink({ order }: { order: DashboardOrder }) {
+  if (order.status === "cancelled") return null;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        apiDownload(`/dashboard/orders/${order.id}/invoice`, "invoice.pdf").catch(() =>
+          alert("Couldn't download the invoice. Please try again."),
+        )
+      }
+      className="block text-[11px] text-blue-600 hover:underline font-normal"
+      title={order.invoice_number ?? "GST invoice"}
+    >
+      Invoice (PDF)
+    </button>
+  );
+}
 
 function OrderItemsList({ items }: { items?: DashboardOrderItem[] }) {
   if (!items || items.length === 0) return <span className="text-gray-400">—</span>;
@@ -413,7 +431,8 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                       #{o.id.slice(0, 8)}{" "}
                       <button onClick={() => openHistory(o)} className="text-xs text-gray-400 underline font-normal">
                         History
-                      </button>
+                      </button>{" "}
+                      <InvoiceLink order={o} />
                       {timing(o)}
                     </p>
                     <p className="text-sm text-gray-800 truncate">{o.buyer_name || "—"}</p>
@@ -465,6 +484,7 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                         <button onClick={() => openHistory(o)} className="block text-[11px] text-gray-400 underline font-normal">
                           History
                         </button>
+                        <InvoiceLink order={o} />
                         {timing(o)}
                       </td>
                       <td className="px-5 py-3">

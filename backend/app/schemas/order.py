@@ -48,9 +48,11 @@ class OrderOut(BaseModel):
     # delivery_address or the shop's own address is what's shown.
     fulfillment_type: str = "delivery"
     total_amount: Decimal
-    # total_amount = subtotal_amount + delivery_fee
+    # total_amount = subtotal_amount + tax_amount (GST) + delivery_fee
     subtotal_amount: Decimal = Decimal("0")
+    tax_amount: Decimal = Decimal("0")
     delivery_fee: Decimal = Decimal("0")
+    invoice_number: str | None = None
     eta_at: datetime | None = None
     slot_start: datetime | None = None
     slot_end: datetime | None = None
@@ -119,6 +121,7 @@ class OrderItemOut(BaseModel):
     mrp: Decimal | None = None
     unit_label: str | None = None
     subtotal: Decimal
+    gst_rate: Decimal = Decimal("0")
     # How many units of this line item are already tied up in a
     # non-cancelled/non-rejected return or exchange request — lets the
     # frontend grey out "Return" once every unit is already claimed,

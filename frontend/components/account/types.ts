@@ -5,8 +5,10 @@ export type AccountOrder = {
   status: string;
   fulfillment_type: string;
   total_amount: string;
-  // total_amount = subtotal_amount + delivery_fee
+  // total_amount = subtotal_amount + tax_amount (GST) + delivery_fee
   subtotal_amount?: string;
+  tax_amount?: string;
+  invoice_number?: string | null;
   delivery_fee?: string;
   // Expected time: the end of the chosen slot, or placement + prep (+ delivery).
   eta_at?: string | null;

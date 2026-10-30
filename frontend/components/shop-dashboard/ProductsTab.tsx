@@ -1,5 +1,6 @@
 "use client";
 
+import { ProductImport } from "./ProductImport";
 import { PriceTag } from "@/components/product/PriceTag";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
@@ -20,6 +21,7 @@ function stockBadge(p: Product) {
 export function ProductsTab({ shopId, userId }: { shopId: string; userId: string }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -76,16 +78,34 @@ export function ProductsTab({ shopId, userId }: { shopId: string; userId: string
           placeholder="Search name, SKU or barcode…"
           className="w-full sm:w-72 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        <button
-          onClick={() => {
-            setEditingId(null);
-            setShowForm(!showForm);
-          }}
-          className="bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2 whitespace-nowrap"
-        >
-          {showForm && !editingId ? "Cancel" : "+ Add Product"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="border border-gray-200 bg-white text-gray-700 text-sm font-medium rounded-lg px-4 py-2 whitespace-nowrap hover:bg-gray-50"
+          >
+            Import CSV
+          </button>
+          <button
+            onClick={() => {
+              setEditingId(null);
+              setShowForm(!showForm);
+            }}
+            className="bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2 whitespace-nowrap"
+          >
+            {showForm && !editingId ? "Cancel" : "+ Add Product"}
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <ProductImport
+          shopId={shopId}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            load();
+          }}
+        />
+      )}
 
       {error && <p className="text-sm text-red-500">{error}</p>}
 
@@ -383,6 +403,8 @@ function ProductForm({
   const [unit, setUnit] = useState(product?.unit ?? "");
   const [sku, setSku] = useState(product?.sku ?? "");
   const [barcode, setBarcode] = useState(product?.barcode ?? "");
+  const [gstRate, setGstRate] = useState(String(Number(product?.gst_rate ?? 0)));
+  const [hsn, setHsn] = useState(product?.hsn_code ?? "");
   const [lowAt, setLowAt] = useState(product?.low_stock_threshold != null ? String(product.low_stock_threshold) : "");
   const [images, setImages] = useState<string[]>(product?.images ?? []);
   const [attributes, setAttributes] = useState<Record<string, string | number | boolean>>(
@@ -421,6 +443,8 @@ function ProductForm({
       unit: unit || null,
       sku: sku.trim() || null,
       barcode: barcode.trim() || null,
+      gst_rate: Number(gstRate),
+      hsn_code: hsn.trim() || null,
       low_stock_threshold: lowAt === "" ? null : Number(lowAt),
     };
   }
@@ -498,7 +522,8 @@ function ProductForm({
           className="border border-gray-200 rounded-md px-3 py-2 text-sm bg-white"
         />
         <input
-          placeholder="Price"
+          placeholder="Price (excluding GST)"
+          title="Selling price excluding GST — GST is added at checkout"
           type="number"
           step="0.01"
           value={price}
@@ -568,6 +593,30 @@ function ProductForm({
             Barcode (EAN / UPC)
             <input
               value={barcode} onChange={(e) => setBarcode(e.target.value)} inputMode="numeric" placeholder="e.g. 8901234567890"
+              className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            />
+          </label>
+          <label className="block text-xs text-gray-500">
+            GST rate (added on top of the price)
+            <select
+              value={gstRate} onChange={(e) => setGstRate(e.target.value)}
+              className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
+            >
+              {["0", "0.25", "3", "5", "12", "18", "28"].map((r) => (
+                <option key={r} value={r}>{r === "0" ? "0% (exempt / nil-rated)" : `${r}%`}</option>
+              ))}
+            </select>
+            {Number(gstRate) > 0 && Number(price) > 0 && (
+              <span className="block mt-1 text-[11px] text-gray-500">
+                Customer pays ₹{(Number(price) * (1 + Number(gstRate) / 100)).toFixed(2)} (₹{Number(price).toFixed(2)} + ₹
+                {(Number(price) * Number(gstRate) / 100).toFixed(2)} GST)
+              </span>
+            )}
+          </label>
+          <label className="block text-xs text-gray-500">
+            HSN code (for invoices)
+            <input
+              value={hsn} onChange={(e) => setHsn(e.target.value)} inputMode="numeric" maxLength={10} placeholder="4, 6 or 8 digits"
               className="mt-1 w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-white text-gray-900"
             />
           </label>

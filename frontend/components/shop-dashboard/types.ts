@@ -51,6 +51,9 @@ export type Shop = {
   slot_capacity?: number;
   slot_days_ahead?: number;
   low_stock_threshold?: number;
+  // GST invoicing (see StoreSettingsTab). Unset GSTIN = unregistered: invoices say "Invoice", not "Tax Invoice".
+  gstin?: string | null;
+  legal_name?: string | null;
 };
 
 export type Product = {
@@ -74,6 +77,9 @@ export type Product = {
   unit_price_label?: string | null;
   sku?: string | null;
   barcode?: string | null;
+  // ---- GST (price EXCLUDES GST; this % is added at checkout) ----
+  gst_rate?: string | number;
+  hsn_code?: string | null;
   // ---- low-stock alerts ----------------------------------------------------
   low_stock_threshold?: number | null; // null = use the shop default
   effective_low_stock_threshold?: number;
@@ -101,8 +107,10 @@ export type DashboardOrder = {
   // what's shown.
   fulfillment_type: string;
   total_amount: string;
-  // total_amount = subtotal_amount + delivery_fee (the fee is fixed when the order is placed)
+  // total_amount = subtotal_amount + tax_amount + delivery_fee (the fee is fixed when the order is placed)
   subtotal_amount?: string;
+  tax_amount?: string; // GST, added on top of subtotal_amount
+  invoice_number?: string | null;
   delivery_fee?: string;
   // When the customer expects it: the END of their slot for a scheduled order,
   // otherwise placement time + prep (+ delivery) time. Shops can move it.

@@ -47,6 +47,10 @@ class Product(Base):
     category: Mapped[str] = mapped_column(String, index=True)
     stock_qty: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
+    # GST: prices EXCLUDE tax; this percent is added on top at checkout.
+    gst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0, server_default="0")
+    hsn_code: Mapped[str | None] = mapped_column(String, nullable=True)
+
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     images: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
 

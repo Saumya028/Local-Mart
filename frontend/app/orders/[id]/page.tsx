@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { apiFetch } from "@/lib/apiClient";
+import { apiDownload, apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
 import UpiPayPanel from "@/components/payment/UpiPayPanel";
 import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
@@ -370,16 +370,24 @@ export default function OrderDetailPage() {
       </div>
 
       <div className="space-y-1 text-sm">
-        {Number(order.delivery_fee ?? 0) > 0 && (
+        {(Number(order.delivery_fee ?? 0) > 0 || Number(order.tax_amount ?? 0) > 0) && (
           <>
             <div className="flex justify-between text-gray-600">
-              <span>Items</span>
+              <span>Items{Number(order.tax_amount ?? 0) > 0 ? " (excl. GST)" : ""}</span>
               <span>{inr(order.subtotal_amount)}</span>
             </div>
-            <div className="flex justify-between text-gray-600">
-              <span>Delivery</span>
-              <span>{inr(order.delivery_fee)}</span>
-            </div>
+            {Number(order.tax_amount ?? 0) > 0 && (
+              <div className="flex justify-between text-gray-600">
+                <span>GST</span>
+                <span>{inr(order.tax_amount)}</span>
+              </div>
+            )}
+            {Number(order.delivery_fee ?? 0) > 0 && (
+              <div className="flex justify-between text-gray-600">
+                <span>Delivery</span>
+                <span>{inr(order.delivery_fee)}</span>
+              </div>
+            )}
           </>
         )}
         <div className="flex justify-between font-semibold text-base">
@@ -388,6 +396,21 @@ export default function OrderDetailPage() {
         </div>
         {Number(order.savings_amount ?? 0) > 0 && (
           <p className="text-xs text-emerald-700 text-right">You saved {inr(order.savings_amount)} on this order</p>
+        )}
+        {order.status !== "cancelled" && (
+          <div className="text-right pt-1">
+            <button
+              type="button"
+              onClick={() =>
+                apiDownload(`/orders/${order.id}/invoice`, "invoice.pdf").catch(() =>
+                  alert("Couldn't download the invoice. Please try again."),
+                )
+              }
+              className="text-sm text-blue-600 hover:underline"
+            >
+              Download invoice (PDF)
+            </button>
+          </div>
         )}
       </div>
 

@@ -142,6 +142,14 @@ class Shop(Base):
     # Minimum item subtotal for a delivery order. 0 = no minimum.
     min_order_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, server_default="0")
 
+    # ---- GST / invoicing ----------------------------------------------
+    # The shop's own GSTIN (unset = unregistered: invoices say "Invoice",
+    # not "Tax Invoice") and the legal name to print on them.
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    legal_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Last invoice number handed out (incremented atomically).
+    invoice_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
     # ---- Inventory ------------------------------------------------------
     # Owners are alerted when a product's stock falls to this many (a product
     # can override it with its own `low_stock_threshold`).

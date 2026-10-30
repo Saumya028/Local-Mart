@@ -49,6 +49,13 @@ class Order(Base):
     # actually pays the shop. The split is stored (not recomputed) so a later
     # change to the shop's fee can never alter a past order.
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    # GST added on top of subtotal_amount (prices exclude GST).
+    # total_amount = subtotal_amount + tax_amount + delivery_fee
+    tax_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0, server_default="0")
+    invoice_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Snapshot of the buyer's business details at checkout (for a B2B invoice).
+    buyer_gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    buyer_business_name: Mapped[str | None] = mapped_column(String, nullable=True)
     subtotal_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=0, server_default="0")
     delivery_fee: Mapped[float] = mapped_column(Numeric(10, 2), default=0, server_default="0")
     # When the customer should expect it. For a scheduled order this is the END of

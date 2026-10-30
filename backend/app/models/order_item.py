@@ -31,3 +31,6 @@ class OrderItem(Base):
     # product later can't rewrite history (savings shown, pack size).
     mrp: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     unit_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    # GST snapshot (percent) and HSN code at checkout.
+    gst_rate: Mapped[float] = mapped_column(Numeric(5, 2), default=0, server_default="0")
+    hsn_code: Mapped[str | None] = mapped_column(String, nullable=True)

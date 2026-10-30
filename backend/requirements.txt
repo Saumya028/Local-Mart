@@ -17,7 +17,7 @@ redis==5.0.8
 pydantic-settings==2.5.2
 python-dotenv==1.2.2
 alembic==1.13.2
-pyjwt[crypto]==2.13.0
+pyjwt[crypto]==2.15.1
 
 # Staff (manager/delivery) account creation calls Supabase's Admin REST
 # API directly (core/supabase_admin.py) — no official async Supabase
@@ -31,3 +31,6 @@ sentry-sdk[fastapi]==2.14.0
 
 # Phase 7 — dependency vulnerability scanning in CI (.github/workflows/ci.yml)
 pip-audit==2.7.3
+
+# GST invoices are rendered to PDF server-side (core/invoice.py).
+reportlab==4.2.5
