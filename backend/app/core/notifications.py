@@ -46,8 +46,12 @@ async def create_notification(
     link: str | None,
     data: dict | None = None,
     dedupe_key: str | None = None,
+    email: bool = True,
 ) -> bool:
-    """Returns False if this exact notification already existed (dedupe)."""
+    """Returns False if this exact notification already existed (dedupe).
+
+    `email=False` makes it in-app only (the bell) — used by customer support,
+    which deliberately doesn't email."""
     notification_id = uuid.uuid4()
     inserted = await db.execute(
         pg_insert(Notification)
@@ -67,7 +71,7 @@ async def create_notification(
     if inserted.first() is None:
         return False
 
-    if user.email and user.email_notifications:
+    if email and user.email and user.email_notifications:
         text, html_body = render_email(msg, public_url(link))
         db.add(
             NotificationOutbox(

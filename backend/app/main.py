@@ -28,6 +28,7 @@ from app.routers import (  # noqa: E402
     addresses,
     admin,
     admin_recommendations,
+    admin_support,
     attribute_schemas,
     auth,
     banners,
@@ -45,6 +46,7 @@ from app.routers import (  # noqa: E402
     shops,
     sponsorship,
     stats,
+    support,
     wishlist,
 )
 
@@ -182,6 +184,7 @@ app.include_router(cart.router)
 app.include_router(addresses.router)
 app.include_router(orders.router)
 app.include_router(returns.router)
+app.include_router(support.router)
 app.include_router(notifications.router)
 app.include_router(wishlist.router)
 app.include_router(stats.router)
@@ -192,6 +195,7 @@ app.include_router(sponsorship.router)
 app.include_router(banners.router)
 app.include_router(admin.router)
 app.include_router(admin_recommendations.router)
+app.include_router(admin_support.router)
 app.include_router(recommendations.router)
 
 

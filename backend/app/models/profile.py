@@ -105,3 +105,9 @@ class Profile(Base):
     # controls whether a copy is also EMAILED. Defaults on: these are
     # transactional messages about the user's own orders.
     email_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+    # Support: set by an admin when a customer keeps filing disputes that are
+    # ruled against them (see routers/admin_support.py). Informational only —
+    # it restricts nothing by itself; admins decide what to do (e.g. suspend).
+    support_flagged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    support_flag_note: Mapped[str | None] = mapped_column(String, nullable=True)

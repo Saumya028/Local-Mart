@@ -5,6 +5,7 @@ import { AccountProfile, initials } from "./types";
 export type AccountTabKey =
   | "orders"
   | "returns"
+  | "support"
   | "wishlist"
   | "addresses"
   | "payments"
@@ -15,6 +16,7 @@ export type AccountTabKey =
 const NAV: { key: AccountTabKey; label: string; icon: string }[] = [
   { key: "orders", label: "My Orders", icon: "📦" },
   { key: "returns", label: "My Returns", icon: "↩" },
+  { key: "support", label: "Support", icon: "🛟" },
   { key: "wishlist", label: "Wishlist", icon: "♡" },
   { key: "addresses", label: "Addresses", icon: "📍" },
   { key: "payments", label: "Saved Payments", icon: "💳" },

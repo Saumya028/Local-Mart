@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiDownload, apiFetch } from "@/lib/apiClient";
 import { ReturnRequestModal } from "@/components/account/ReturnRequestModal";
+import { ReportModal } from "@/components/support/ReportModal";
+import { SupportCase, withinReportWindow } from "@/components/support/types";
 import UpiPayPanel from "@/components/payment/UpiPayPanel";
 import { OrderEvent, OrderTimeline } from "@/components/orders/OrderTimeline";
 import { DEFAULT_TZ, etaText, inr } from "@/lib/shopInfo";
@@ -41,6 +43,9 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
   const [timeline, setTimeline] = useState<OrderEvent[]>([]);
+  const [supportCases, setSupportCases] = useState<SupportCase[]>([]);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportWindowDays, setReportWindowDays] = useState(3);
   const [error, setError] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<OrderDetailItem | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
@@ -81,10 +86,25 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function loadSupport() {
+    try {
+      setSupportCases(await apiFetch(`/support/cases?order_id=${params.id}`));
+    } catch {
+      // Non-fatal — the order still renders without its support history.
+    }
+  }
+
+  useEffect(() => {
+    apiFetch("/support/options")
+      .then((o) => setReportWindowDays(o.report_window_days))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     load();
     loadReturns();
     loadTimeline();
+    loadSupport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
@@ -187,6 +207,9 @@ export default function OrderDetailPage() {
   const eligibleForReturn =
     (order.status === "delivered" || order.status === "picked_up") && isWithinReturnWindow(order.delivered_at);
 
+  const openReport = supportCases.find((c) => c.status !== "resolved") ?? null;
+  const reportWindowOpen = !fulfilled || withinReportWindow(order.delivered_at, reportWindowDays);
+
   return (
     <main className="max-w-2xl mx-auto px-6 py-10 space-y-6">
       <div>
@@ -213,6 +236,20 @@ export default function OrderDetailPage() {
           <p className="text-xs text-gray-400 mt-1">
             Eligible for return/exchange until {returnDeadline(order.delivered_at).toLocaleDateString("en-IN")}
           </p>
+        )}
+        {openReport ? (
+          <p className="text-xs text-gray-500 mt-2">
+            You have an open report on this order.{" "}
+            <Link href={`/profile?tab=support&case=${openReport.id}`} className="text-blue-600 hover:underline">
+              View it
+            </Link>
+          </p>
+        ) : (
+          reportWindowOpen && (
+            <button onClick={() => setReportOpen(true)} className="text-xs text-blue-600 hover:underline mt-2">
+              Something wrong? Report a problem
+            </button>
+          )
         )}
         {order.delivery_proof_photo_url && (
           <a
@@ -461,6 +498,21 @@ export default function OrderDetailPage() {
           onSaved={() => {
             setReviewTarget(null);
             load();
+          }}
+        />
+      )}
+
+      {reportOpen && (
+        <ReportModal
+          mode="order"
+          orderId={order.id}
+          orderRef={`#${order.id.slice(0, 8).toUpperCase()}`}
+          shopName={order.shop?.name}
+          onClose={() => setReportOpen(false)}
+          onSubmitted={() => {
+            setReportOpen(false);
+            loadSupport();
+            loadTimeline();
           }}
         />
       )}

@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sidebar, AdminTabKey } from "@/components/admin/Sidebar";
 import { Topbar } from "@/components/admin/Topbar";
 import { DashboardTab } from "@/components/admin/DashboardTab";
 import { ShopsTab } from "@/components/admin/ShopsTab";
 import { UsersTab } from "@/components/admin/UsersTab";
+import { SupportTab } from "@/components/admin/SupportTab";
 import { BannersTab } from "@/components/admin/BannersTab";
 import { AttributesTab } from "@/components/admin/AttributesTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
@@ -18,6 +19,7 @@ const SEARCH_PLACEHOLDERS: Partial<Record<AdminTabKey, string>> = {
   shops: "Search shops, owners, categories…",
   banners: "Search shops or banner spots…",
   users: "Search name, email or role…",
+  support: "Search customer, shop or report id…",
   attributes: "Search categories…",
 };
 
@@ -26,6 +28,7 @@ const TAB_TITLES: Record<AdminTabKey, string> = {
   shops: "Shops",
   banners: "Banners",
   users: "Users",
+  support: "Support",
   attributes: "Attributes",
   reports: "Reports",
   recommendations: "Recommendations",
@@ -36,6 +39,16 @@ export default function AdminPanelPage() {
   const { profile, loading: authLoading, loggedIn } = useAuth();
   const [tab, setTab] = useState<AdminTabKey>("dashboard");
   const [pendingShopsCount, setPendingShopsCount] = useState(0);
+  const [supportCount, setSupportCount] = useState(0);
+  const [openCaseId, setOpenCaseId] = useState<string | null>(null);
+
+  // Notification links like /admin?tab=support&case=<id> deep-link into a tab.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("tab");
+    if (wanted && wanted in TAB_TITLES) setTab(wanted as AdminTabKey);
+    setOpenCaseId(params.get("case"));
+  }, []);
   const [search, setSearch] = useState("");
   // Mobile nav drawer (the sidebar is off-canvas below the `md` breakpoint).
   const [menuOpen, setMenuOpen] = useState(false);
@@ -86,6 +99,7 @@ export default function AdminPanelPage() {
           setSearch("");
         }}
         pendingShopsCount={pendingShopsCount}
+        supportCount={supportCount}
         adminEmail={profile?.email ?? null}
         open={menuOpen}
         onClose={closeMenu}
@@ -104,6 +118,7 @@ export default function AdminPanelPage() {
           {tab === "shops" && <ShopsTab search={search} onPendingCountChange={setPendingShopsCount} />}
           {tab === "banners" && <BannersTab search={search} />}
           {tab === "users" && <UsersTab search={search} selfId={profile?.id ?? null} />}
+          {tab === "support" && <SupportTab search={search} openCaseId={openCaseId} onAttentionCount={setSupportCount} />}
           {tab === "attributes" && <AttributesTab search={search} />}
           {tab === "reports" && <ReportsTab />}
           {tab === "recommendations" && <RecommendationsTab />}

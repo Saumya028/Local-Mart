@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AccountSidebar, AccountTabKey } from "@/components/account/Sidebar";
 import { OrdersTab } from "@/components/account/OrdersTab";
 import { ReturnsTab } from "@/components/account/ReturnsTab";
+import { SupportTab } from "@/components/account/SupportTab";
 import { WishlistTab } from "@/components/account/WishlistTab";
 import { AddressesTab } from "@/components/account/AddressesTab";
 import { SettingsTab } from "@/components/account/SettingsTab";
@@ -16,6 +17,7 @@ import { ComingSoonTab } from "@/components/account/ComingSoonTab";
 const TAB_TITLES: Record<AccountTabKey, string> = {
   orders: "My Orders",
   returns: "My Returns",
+  support: "Support",
   wishlist: "Wishlist",
   addresses: "Addresses",
   payments: "Saved Payments",
@@ -106,6 +108,7 @@ function ProfilePageContent() {
 
           {tab === "orders" && <OrdersTab onOrdersLoaded={(orders) => setOrderCount(orders.length)} />}
           {tab === "returns" && <ReturnsTab />}
+          {tab === "support" && <SupportTab openCaseId={searchParams.get("case")} startNew={searchParams.get("new") === "1"} />}
           {tab === "wishlist" && <WishlistTab onLoaded={(items) => setWishlistCount(items.length)} />}
           {tab === "addresses" && <AddressesTab />}
           {tab === "settings" && <SettingsTab profile={profile} onUpdated={() => refresh()} />}

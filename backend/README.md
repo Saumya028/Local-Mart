@@ -327,3 +327,122 @@ follow-up, not a surprise later.
 Launch & beyond - custom domain + SSL, a staging environment kept alive
 permanently, and then watching real usage to decide what actually needs
 scaling, rather than pre-optimizing for load that doesn't exist yet.
+
+
+## Reviews & ratings (migration 0021)
+
+Run `alembic upgrade head`. Customers with a delivered/picked-up order can
+rate (1-5 stars) and review products and shops; reviews are public, one per
+customer per product/shop (editable). Shop owners/managers manage them under
+`/dashboard/reviews` (reply, hide/unhide). `products.rating_avg/rating_count`
+and `shops.rating/rating_count` are recomputed on every change
+(`app/core/reviews.py`). Routers: `routers/reviews.py` (public + customer),
+`routers/shop_reviews.py` (owner).
+
+## Recommendations (migration 0022)
+
+Item-to-item "customers also bought" engine: nightly batch build + indexed
+request-time serving, with an offline quality gate, rollback, opt-out,
+experiment holdout and an admin dashboard. Full architecture, thresholds and
+runbook: [`docs/recommendations.md`](docs/recommendations.md).
+
+```bash
+alembic upgrade head                                   # adds the tables + profiles.personalization_opt_out
+pip install -r requirements-reco.txt                   # numpy/scipy, needed by the job only
+python -m scripts.seed_reco_demo                       # (dev) synthetic shoppers
+python -m scripts.build_recommendations                # build, evaluate, promote if good
+python -m scripts.build_recommendations --rollback     # emergency: previous model
+```
+Schedule the build nightly (02:30 IST) and monitor `GET /health/recommendations`.
+Kill switch: `RECO_ENABLED=false`.
+
+
+## Hardening pass 2 (migration 0023)
+
+Run `alembic upgrade head` (adds `pg_trgm` + search indexes) and set the new env vars below on your host.
+
+- **Cart quantities are validated** (`1..99` per line, `0` removes) at the API *and* re-checked at checkout — a negative quantity previously passed the stock guard and could add stock / make a negative total.
+- **Checkout idempotency is atomic** (`SET NX` lock in `core/idempotency.py`): simultaneous retries with the same key run the checkout once; a duplicate waits for the first result, or gets `409` if it takes >10 s.
+- **Stale orders expire** (`core/order_expiry.py`, `python -m scripts.expire_unpaid_orders`, every ~15 min): a still-unpaid UPI order after `ORDER_UNPAID_UPI_EXPIRY_MINUTES` (120), or any order the shop never started after `ORDER_UNACTED_EXPIRY_HOURS` (24), is cancelled and its stock released. Orders with a *submitted*/*paid* payment, or that the shop already started, are never auto-cancelled. Scheduled by the `expire-orders` job in `.github/workflows/ci.yml` (needs the repo secrets), or use your host's cron.
+- **`/health`** returns `ok`/`error` only; details go to the logs.
+- **Per-IP rate limiting behind a proxy:** set `TRUSTED_PROXY_COUNT` (1 on Railway/Render/Fly/Heroku). See `core/client_ip.py`. Left at `0`, the `X-Forwarded-For` header is ignored.
+- **Search:** user text is escaped (no accidental `%`/`_` wildcards), typo-tolerant name matching via `pg_trgm`, and `limit`/`offset` pagination on `/products` and `/shops`. No full-text stemming yet.
+- Removed the dead `routers/webhooks.py`; bumped `pyjwt` to 2.15.1 (14 new advisories on 2.13.0); added `pyproject.toml` (ruff: unused/undefined names only).
+- **Tests:** `tests/test_integration_fixes.py` runs against real Postgres + Redis (skips when unavailable). CI now provides both.
+
+
+## Notifications & order history (migration 0024)
+
+**Order history** (`order_events`): every order, payment and return change appends a row — what happened, who did it (`actor_id` + `actor_role`), from/to status, a note, and metadata such as the delivery-proof photo or a UTR. A database trigger rejects edits (the only allowed change is `actor_id` → NULL when an account is deleted, so the record survives and still says "a manager"). Everything goes through `core/order_events.order_changed()`, called before `commit()` so the history commits atomically with the change. Views: customer `GET /orders/{id}/timeline` (staff shown only as "The shop"), shop `GET /dashboard/orders/{id}/timeline` (names + roles), admin `GET /admin/orders/{id}/timeline`. Existing orders were back-filled with a starting entry.
+
+**Notifications**: each event notifies the right people (`core/notification_templates.py` has all the wording): the customer gets an order receipt, step updates, payment/return outcomes and cancellations; the shop owner and managers get new orders, payments to confirm, cancellations/expiries and return requests. Each notification is an in-app row (the bell: `GET /notifications`, `/notifications/unread-count`, `POST /notifications/{id}/read`, `/notifications/read-all`) plus, if the user has an email and hasn't turned it off (My Account → Settings), a queued email.
+
+**Reliability design**
+- Notification rows and queued emails are written in the *same transaction* as the order change (transactional outbox): never an email for a rolled-back order, never an order whose "new order" alert was lost.
+- Notifying runs in a savepoint: a bug in a template can't block an order — it's logged and the order still goes through (history is still recorded).
+- Emails are delivered by a worker with retries (1 → 2 → 4 → 8 min, `NOTIFICATION_MAX_ATTEMPTS`, then marked `failed` with the error kept). Rows are claimed with `FOR UPDATE SKIP LOCKED` + a lease, so several workers never double-send and a crashed worker's rows are retried.
+- The worker runs **inside the API process** by default (`NOTIFICATION_WORKER_ENABLED=true`). If your backend host is serverless/ephemeral, turn that off and run `python -m scripts.send_notifications` from cron every minute (or `--loop` as its own worker).
+
+**Choose an email provider** (`EMAIL_PROVIDER`): `console` (default — logs only, sends nothing), `resend` (`RESEND_API_KEY`), or `smtp` (Brevo/SES/etc.). Use an `EMAIL_FROM` on a domain you've verified with the provider (SPF/DKIM), or messages will land in spam. Check failures with: `SELECT status, last_error, count(*) FROM notification_outbox GROUP BY 1, 2;`
+
+Not built yet: SMS/WhatsApp/web push (the outbox has a `channel` column ready for them), reminders to shops about unconfirmed orders, per-event notification preferences.
+
+
+## Shop profile, delivery pricing, ETA & time slots (migration 0025)
+
+**Shop profile** — new shop fields: `contact_phone` (required to apply; can't be cleared later), `description`, `opening_hours`, `timezone`, and a vacation switch (`temporarily_closed` + optional `closed_until` + `closed_message`). Owners edit these in the dashboard's **Store settings** tab (`PUT /dashboard/shops/{id}`); customers see them on the store page and in `GET /shops`, `GET /shops/{id}` (including a computed `open_info`: `{is_open, state, opens_at, closes_at, message}`).
+
+**Opening hours** (`core/shop_hours.py`) — a weekly schedule of up to 3 ranges per day in the shop's timezone; `"24:00"` means midnight; a closing time at/before the opening time runs past midnight; a day with no ranges is closed. **`opening_hours = NULL` means "not set" = always open**, so shops that existed before this feature behave exactly as before until their owner sets hours. Vacation mode overrides everything and reopens by itself at `closed_until`. `open_info` in shop responses is cached up to 60 s with the rest of the response; the checkout always re-checks live.
+
+**Delivery pricing** (delivery orders only — pickup never pays a fee and has no minimum): `delivery_fee`, `free_delivery_above` (subtotal at/above it ⇒ fee waived), `min_order_amount` (items subtotal, before the fee). Orders now store `subtotal_amount` + `delivery_fee` (+ `total_amount` = their sum = what the customer pays the shop, also the payment amount), fixed at placement — changing a shop's fee later never alters a past order. Returns refund item prices only, not the delivery fee.
+
+**ETA** — every order gets `eta_at`: placement + `prep_time_minutes` (+ `delivery_time_minutes` for delivery). Shops can move it with `PATCH /dashboard/orders/{id}/eta` (recorded in the order history as `eta_changed`, customer notified).
+
+**Time slots** (opt-in per shop, needs opening hours): slots of `slot_length_minutes`, aligned to the shop's clock, fully inside opening hours and outside vacations, no sooner than prep (+ delivery) time from now, up to `slot_days_ahead` calendar days, at most `slot_capacity` non-cancelled orders each. Booking a slot is serialised with a Postgres advisory lock so two customers can't both take the last place (tested with concurrent checkouts). A shop that's closed right now still accepts orders **for a slot**; a vacationing shop doesn't. A cancelled order frees its place.
+
+**One rule-set, two entry points** — `core/shop_plan.plan_shop_order()` decides open/closed, minimum, fee, slot and ETA. `POST /orders/quote` (used live by the checkout page) returns every problem; `POST /orders` (real checkout) refuses on the first one, using the same code. Checkout also now refuses shops that are unlisted or not approved.
+
+Not built yet: ordering open shops first in listings, holiday-specific hours (use the vacation switch), per-distance delivery fees, a delivery fee for pickup-and-collect-later orders.
+
+
+## Product pricing, units, SKU/barcode & low-stock alerts (migration 0026)
+
+**Price vs MRP** — `price` is always the SELLING price (what's charged, what checkout uses). `mrp` is optional: when it's above the price, customers see it struck through with "X% off" (`discount_percent`, only when it rounds to ≥ 1%). `mrp` must be ≥ `price` (selling above MRP is illegal for packaged goods in India) — enforced by the API, and by a database check. Orders snapshot `mrp` and the pack size on each line, so editing a product later never changes what an old order shows; order detail also returns `savings_amount`.
+
+**Pack size** — `unit_value` + `unit` (g, kg, ml, l, pcs, pack, dozen), both or neither → `unit_label` ("500 g", "1 L"). For weight/volume packs a comparison price is computed (`unit_price_label`, e.g. "₹8 / 100 g"), shown on the product page.
+
+**SKU & barcode** — owner-only fields (never in public responses). SKU: letters/numbers/`. _ - /`, ≤ 40 chars, unique per shop case-insensitively. Barcode: EAN-8/UPC-A/EAN-13/GTIN-14 with the **check digit verified** (catches typos/bad scans), unique per shop. Different shops may reuse the same value. Duplicates return 409 with a clear message. `GET /dashboard/products?q=` searches name, SKU and an exact barcode (what a scanner "types").
+
+**Input validation that didn't exist before** — price must be > 0, stock ≥ 0 (API + a DB check, added `NOT VALID` so legacy negative rows don't block the migration but no new ones can be written).
+
+**Low-stock alerts** (`core/stock_alerts.py`) — a product is "low" at/below its `low_stock_threshold` (else the shop's default `shops.low_stock_threshold`, 5) and "out" at 0. The owner and managers get a bell + email notification **once when a product enters low, and once when it sells out** — not on every sale. Restocking re-arms it silently. The state change is a compare-and-set, so simultaneous sales still send exactly one alert (tested). Edits made by the owner themselves update the state without notifying them. `GET /dashboard/products?stock=low|out` and `GET /dashboard/products/stock-summary` power the Inventory tab and the dashboard banner.
+
+Not built yet: barcode scanning with the phone camera (the site's Permissions-Policy currently blocks the camera), bulk CSV import/export of prices and stock, price history, per-variant MRP editing in bulk, GST rates/HSN codes (planned with invoices).
+
+
+## Customer support: reports, disputes & admin resolution (migration 0028)
+
+Customers can report a problem; shops reply once; admins resolve what is escalated. **Returns are a separate feature and are unchanged** — a rejected return does *not* flow into this.
+
+**What can be reported** (`POST /support/cases`, reasons are fixed lists from `GET /support/options`)
+- `order_problem` / `payment_problem` — about one of the customer's orders. The shop replies first. Reportable while the order is open and for `SUPPORT_REPORT_WINDOW_DAYS` (3) after delivery/pickup (or after cancellation). **One unresolved report per order** (also a partial unique index in the database).
+- `shop_report` — about a shop; `general` — an app/account issue. Both go **straight to admin**. For a shop report the shop is notified that a report exists, *without details*, and never sees it in its list.
+
+**Flow (order/payment problems)**
+1. Customer files it (text + up to 5 photos) → shop owner and managers are notified in-app.
+2. The shop sends **one** structured reply — agree to fix / offer / disagree (with explanation and photos) — **or** asks the customer for more information **once** (the customer answers, then the shop replies).
+3. The customer **accepts** or **escalates to admin** — escalation is allowed at any time while the report is open.
+4. No shop reply within `SUPPORT_SHOP_REPLY_HOURS` (48) → flagged "overdue" to admin. Customer silent for `SUPPORT_AUTO_CLOSE_DAYS` (3) after a shop reply or info request → closes automatically.
+
+**Admin** (`/admin/support/*`)
+- **Rule**: for the customer / for the shop / no fault, with a note shown to **both** sides. When ruling for the customer an admin may also **order a refund or resend by a deadline**; the case waits (`action_pending`) until the shop (or an admin) confirms it. The platform never holds the money, so this is an instruction, not a transfer. A missed deadline only **alerts admin** — no automatic penalty.
+- **Review** shop reports / general issues: the reporter only ever sees "action taken" or "no action needed".
+- **Act on the shop**: warn (shop sees the note), hide (same `is_active` switch as Manage Shops), or suspend the owner's account (the shop stays visible unless also hidden).
+- **Flag customers**: after 3 disputes ruled against a customer in 60 days the system *suggests* a flag and notifies admins; an admin confirms. A flag is informational only — it restricts nothing by itself.
+- Internal notes are admin-only and never serialised for customers or shops (`core/support_view.py` decides who sees what on the server). Every admin action is audit-logged in the same transaction.
+
+**Notifications** are **in-app only** (no email) via the existing bell. Case history is append-only (`support_case_events`, UPDATEs rejected by a trigger) and key steps are mirrored onto the order timeline as evidence.
+
+**Scheduled job** — `python -m scripts.sweep_support` (flags overdue, auto-closes idle cases, alerts on late admin-ordered actions). It runs as a second step of the existing every-15-minutes `expire-orders` job in `.github/workflows/ci.yml`; use your host's cron if you prefer.
+
+Tunables: `SUPPORT_REPORT_WINDOW_DAYS`, `SUPPORT_SHOP_REPLY_HOURS`, `SUPPORT_AUTO_CLOSE_DAYS`, `SUPPORT_MAX_PHOTOS`. Tests: `tests/test_support_rules.py` (pure) and `tests/test_integration_support.py` (end to end, needs Postgres + Redis).

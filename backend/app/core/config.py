@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     # many hours is cancelled, unless a payment was reported/received.
     order_unacted_expiry_hours: int = 24
 
+    # ---- Customer support (see app/core/support_rules.py) -------------------
+    # How long after delivery/pickup a customer can still report an order or
+    # payment problem (an order that hasn't been delivered yet can always be
+    # reported while it is open).
+    support_report_window_days: int = 3
+    # A shop has this long to reply before the case is flagged "overdue" to admin.
+    support_shop_reply_hours: int = 48
+    # After a shop reply (or info request) with no customer action, the case
+    # closes itself this many days later.
+    support_auto_close_days: int = 3
+    # Max photos per message.
+    support_max_photos: int = 5
+
     # ---- Proxy handling (see app/core/client_ip.py) ------------------------
     # How many reverse proxies / load balancers sit in front of this app and
     # append to X-Forwarded-For (Railway/Render/Fly/Heroku: 1; direct: 0).

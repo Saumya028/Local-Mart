@@ -2,7 +2,7 @@
 
 import { NavDrawer } from "@/components/dashboard/NavDrawer";
 
-export type AdminTabKey = "dashboard" | "shops" | "banners" | "users" | "attributes" | "reports" | "recommendations" | "settings";
+export type AdminTabKey = "dashboard" | "shops" | "banners" | "users" | "support" | "attributes" | "reports" | "recommendations" | "settings";
 
 const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
   {
@@ -49,6 +49,16 @@ const NAV: { key: AdminTabKey; label: string; icon: JSX.Element }[] = [
         <path d="M2.5 16.5c0-2.6 2.1-4.3 4.7-4.3s4.7 1.7 4.7 4.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         <circle cx="14" cy="6.5" r="2" stroke="currentColor" strokeWidth="1.4" />
         <path d="M12.8 12.4c2 .2 3.7 1.8 3.7 4.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "support",
+    label: "Support",
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+        <path d="M3 5.5A2.5 2.5 0 0 1 5.5 3h9A2.5 2.5 0 0 1 17 5.5v6a2.5 2.5 0 0 1-2.5 2.5H9l-3.5 3v-3h0A2.5 2.5 0 0 1 3 11.5v-6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="M7 7.5h6M7 10h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -103,6 +113,7 @@ export function Sidebar({
   tab,
   onSelectTab,
   pendingShopsCount,
+  supportCount,
   adminEmail,
   open,
   onClose,
@@ -110,6 +121,7 @@ export function Sidebar({
   tab: AdminTabKey;
   onSelectTab: (t: AdminTabKey) => void;
   pendingShopsCount: number;
+  supportCount: number;
   adminEmail: string | null;
   // Mobile drawer state (below `md` the sidebar is an off-canvas drawer).
   open: boolean;
@@ -161,6 +173,11 @@ export function Sidebar({
           >
             {item.icon}
             <span className="flex-1 text-left">{item.label}</span>
+            {item.key === "support" && supportCount > 0 && (
+              <span className="bg-red-500 text-white text-[11px] font-semibold rounded-full min-w-5 h-5 px-1 flex items-center justify-center">
+                {supportCount}
+              </span>
+            )}
             {item.key === "shops" && pendingShopsCount > 0 && (
               <span className="bg-red-500 text-white text-[11px] font-semibold rounded-full w-5 h-5 flex items-center justify-center">
                 {pendingShopsCount}

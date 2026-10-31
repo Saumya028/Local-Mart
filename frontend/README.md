@@ -41,6 +41,49 @@ below for why. If you're pulling this after having a local checkout
 from before this phase, run `npm install` fresh rather than reusing an
 old `node_modules`.
 
+### Support evidence storage setup (required for photos on support reports)
+
+Customers and shops can attach up to 5 photos to a report or reply
+(`frontend/lib/supportUpload.ts`). They go to a **private** bucket under the
+uploader's own folder, and the case stores a long-lived signed link, so the
+customer, the shop and an admin can all open them from the case — but the
+files can't be listed or guessed. Run once in the Supabase SQL Editor:
+
+```sql
+insert into storage.buckets (id, name, public)
+values ('support-evidence', 'support-evidence', false)
+on conflict (id) do nothing;
+
+create policy "Users can upload their own support evidence"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'support-evidence'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "Users can read their own support evidence"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'support-evidence'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "Admins can read all support evidence"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'support-evidence'
+  and exists (
+    select 1 from public.profiles
+    where profiles.id = auth.uid() and profiles.role = 'admin'
+  )
+);
+```
+
+Without it, reports still work, but the photo upload step fails with a
+storage error. Support lives in **My Account → Support**, **Report a problem**
+on each order, **Report this shop** on shop pages, the footer **Help** link, the
+shop dashboard's **Disputes** tab and the admin panel's **Support** tab.
+
 ### Shop document storage setup (required for shop applications to work)
 
 Applying for a shop now requires uploading at least one verification

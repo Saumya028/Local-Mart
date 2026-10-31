@@ -7,6 +7,7 @@ import { RatingBadge } from "@/components/reviews/StarRating";
 import { ShopReviewsSection } from "@/components/reviews/ShopReviewsSection";
 import { ShopInfoPanel, PublicShopInfo } from "@/components/shop/ShopInfoPanel";
 import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
+import { ReportShopButton } from "@/components/support/ReportShopButton";
 
 type Shop = PublicShopInfo & { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
 type Product = { id: string; name: string; price: string; mrp?: string | null; discount_percent?: number | null; unit_label?: string | null; stock_qty?: number; category: string; images: string[]; rating_avg?: number; rating_count?: number };
@@ -103,6 +104,10 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
 
       <div id="reviews" className="border-t pt-8 scroll-mt-20">
         <ShopReviewsSection shopId={shop.id} shopName={shop.name} />
+      </div>
+
+      <div className="border-t pt-4 flex justify-end">
+        <ReportShopButton shopId={shop.id} shopName={shop.name} />
       </div>
     </main>
   );

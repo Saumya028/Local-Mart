@@ -10,6 +10,7 @@ import { Topbar } from "@/components/shop-dashboard/Topbar";
 import { DashboardTab } from "@/components/shop-dashboard/DashboardTab";
 import { OrdersTab } from "@/components/shop-dashboard/OrdersTab";
 import { ReturnsTab } from "@/components/shop-dashboard/ReturnsTab";
+import { SupportTab } from "@/components/shop-dashboard/SupportTab";
 import { ReviewsTab } from "@/components/shop-dashboard/ReviewsTab";
 import { ProductsTab } from "@/components/shop-dashboard/ProductsTab";
 import { InventoryTab } from "@/components/shop-dashboard/InventoryTab";
@@ -30,6 +31,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   dashboard: "Dashboard",
   orders: "Orders",
   returns: "Returns",
+  support: "Disputes",
   reviews: "Reviews",
   products: "Products",
   inventory: "Inventory",
@@ -319,6 +321,7 @@ function ShopDashboard() {
           )}
           {selectedShopId && tab === "orders" && <OrdersTab shopId={selectedShopId} />}
           {selectedShopId && tab === "returns" && <ReturnsTab shopId={selectedShopId} />}
+          {selectedShopId && tab === "support" && <SupportTab shopId={selectedShopId} openCaseId={searchParams.get("case")} />}
           {selectedShopId && tab === "reviews" && <ReviewsTab shopId={selectedShopId} onSummary={setUnrepliedReviews} />}
           {selectedShopId && tab === "products" && <ProductsTab shopId={selectedShopId} userId={profile!.id} />}
           {selectedShopId && tab === "inventory" && <InventoryTab shopId={selectedShopId} />}
