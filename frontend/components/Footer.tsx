@@ -32,6 +32,9 @@ export default function Footer() {
           <Link href="/terms" className="hover:text-gray-900">
             Terms of Service
           </Link>
+          <Link href="/profile?tab=support&new=1" className="hover:text-gray-900">
+            Help
+          </Link>
         </nav>
       </div>
     </footer>

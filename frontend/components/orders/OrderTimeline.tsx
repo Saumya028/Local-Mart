@@ -57,6 +57,18 @@ function describe(e: OrderEvent): { label: string; tone: "ok" | "bad" | "neutral
       return { label: `${reqType} completed`, tone: "ok" };
     case "return_cancelled":
       return { label: `${reqType} request withdrawn`, tone: "neutral" };
+    case "support_opened":
+      return { label: `Problem reported${e.note ? `: ${e.note}` : ""}`, tone: "bad" };
+    case "support_shop_replied":
+      return { label: "Shop replied to the reported problem", tone: "neutral" };
+    case "support_escalated":
+      return { label: "Problem escalated to LocalMart support", tone: "neutral" };
+    case "support_ruled":
+      return { label: "LocalMart support ruled on the reported problem", tone: "ok" };
+    case "support_action_done":
+      return { label: "Shop confirmed the ordered refund/resend", tone: "ok" };
+    case "support_closed":
+      return { label: "Reported problem closed", tone: "ok" };
     case "difference_reported":
       return { label: "Exchange top-up reported", tone: "neutral" };
     case "difference_confirmed":

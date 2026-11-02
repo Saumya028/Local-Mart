@@ -446,3 +446,18 @@ Customers can report a problem; shops reply once; admins resolve what is escalat
 **Scheduled job** — `python -m scripts.sweep_support` (flags overdue, auto-closes idle cases, alerts on late admin-ordered actions). It runs as a second step of the existing every-15-minutes `expire-orders` job in `.github/workflows/ci.yml`; use your host's cron if you prefer.
 
 Tunables: `SUPPORT_REPORT_WINDOW_DAYS`, `SUPPORT_SHOP_REPLY_HOURS`, `SUPPORT_AUTO_CLOSE_DAYS`, `SUPPORT_MAX_PHOTOS`. Tests: `tests/test_support_rules.py` (pure) and `tests/test_integration_support.py` (end to end, needs Postgres + Redis).
+
+## Email policy: only what matters (no migration)
+
+Every notification still appears in the in-app bell. **Email is an explicit allowlist** in `app/core/email_policy.py` — a notification kind that isn't listed is bell-only, so adding a new kind can never start emailing by accident (`create_notification(..., email=...)` defaults to `False`).
+
+| Who | Emailed | Bell only |
+| --- | --- | --- |
+| Customer | order confirmation (order placed); a one-time **welcome** at first signup | preparing / packing / out for delivery / delivered, ETA changes, payment updates, shop cancellations, return outcomes, exchange top-up confirmed, support |
+| Shop owner / manager | a customer's **return request**; an **exchange top-up** reported | new-order alerts, payment submitted, cancellations / payment-method changes, return cancelled, low / out-of-stock, support |
+
+- **Welcome email** (`app/core/welcome.py`): sent once, when a profile is first created (the first successful login, so after Supabase's own confirmation email). Exactly-once via a dedupe key; failures are swallowed in a savepoint and never block login. Phone-only signups (no email) get the bell message only.
+- The existing **Settings → email toggle** still applies to everything that is emailed. It is reworded in the UI ("Email me about the important things").
+- Emails already queued before this change are still delivered (the outbox is untouched); only new notifications follow the policy.
+- **Promotional email is not built.** When it is, it must be opt-in (a consent checkbox at signup and in Settings, off until ticked) and carry an unsubscribe link.
+- To email another kind, add `(audience, kind)` to `EMAILED` and extend `tests/test_email_policy.py`.

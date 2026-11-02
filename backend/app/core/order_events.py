@@ -22,6 +22,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.email_policy import should_email
 from app.core.notification_templates import customer_message, money, order_ref, shop_message
 from app.core.shop_hours import describe_eta, zone_of
 from app.core.notifications import create_notification, shop_team
@@ -120,6 +121,7 @@ async def _notify(db: AsyncSession, order: Order, event: OrderEvent, actor: Prof
         await create_notification(
             db, buyer, customer_msg, kind=event.kind, link=f"/orders/{order.id}",
             data={"order_id": str(order.id)}, dedupe_key=f"event:{event.id}:{buyer.id}",
+            email=should_email("customer", event.kind),
         )
     if shop_msg:
         for member in await shop_team(db, shop):
@@ -129,4 +131,5 @@ async def _notify(db: AsyncSession, order: Order, event: OrderEvent, actor: Prof
                 db, member, shop_msg, kind=event.kind, link="/shop/dashboard?tab=orders",
                 data={"order_id": str(order.id), "shop_id": str(shop.id)},
                 dedupe_key=f"event:{event.id}:{member.id}",
+                email=should_email("shop", event.kind),
             )

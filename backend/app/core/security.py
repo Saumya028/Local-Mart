@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_db
 from app.core import customer_validation as cv
+from app.core.welcome import send_welcome
 from app.models import Address, Profile
 
 logger = logging.getLogger(__name__)
@@ -212,6 +213,7 @@ async def get_current_user(
                     db.add(Address(id=uuid.uuid4(), user_id=user_id, is_default=True, **first_address))
             except Exception:
                 logger.warning("Could not save signup address for user %s", user_id, exc_info=True)
+        await send_welcome(db, profile)
         await db.commit()
         await db.refresh(profile)
 

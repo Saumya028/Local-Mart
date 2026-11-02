@@ -190,10 +190,11 @@ export function SettingsTab({ profile, onUpdated }: { profile: AccountProfile; o
             className="mt-1"
           />
           <span className="text-sm text-gray-700">
-            Email me about my orders
+            Email me about the important things
             <span className="block text-xs text-gray-400 mt-0.5">
-              Order updates, payment and return messages are always shown under the bell icon; this also sends a copy
-              to {profile.email ?? "your email address (add one to enable this)"}.
+              Order progress, payment and return updates always appear under the bell icon. With this on, we also email{" "}
+              {profile.email ?? "your email address (add one to enable this)"} for the few that matter: your order confirmation
+              and, if you run a shop, new return requests and exchange top-ups.
             </span>
           </span>
         </label>

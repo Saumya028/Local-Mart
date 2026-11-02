@@ -1,6 +1,7 @@
 """
-Creating notifications: an in-app row (the bell) and — if the user has an
-email address and hasn't opted out — a queued email in the outbox.
+Creating notifications: an in-app row (the bell) and — for the few kinds the
+email policy allows, if the user has an address and hasn't opted out — a queued
+email in the outbox.
 
 Both rows are written in the CALLER's database transaction (nothing is
 committed here), so a notification exists if and only if the change that
@@ -46,12 +47,14 @@ async def create_notification(
     link: str | None,
     data: dict | None = None,
     dedupe_key: str | None = None,
-    email: bool = True,
+    email: bool = False,
 ) -> bool:
     """Returns False if this exact notification already existed (dedupe).
 
-    `email=False` makes it in-app only (the bell) — used by customer support,
-    which deliberately doesn't email."""
+    Always creates the in-app row (the bell). An email is queued ONLY when the
+    caller passes `email=True` — decide that with core/email_policy.should_email
+    — and the person has an address and hasn't switched email off. Default is
+    bell-only, so a new kind can't start emailing by accident."""
     notification_id = uuid.uuid4()
     inserted = await db.execute(
         pg_insert(Notification)

@@ -15,15 +15,15 @@ const COLUMNS: { title: string; links: { label: string; href: string; external?:
     links: [
       { label: "For Businesses", href: "/shop/dashboard" },
       { label: "Pricing", href: "/pricing" },
-      // { label: "API", href: API_DOCS_URL, external: true },
+      { label: "API", href: API_DOCS_URL, external: true },
       { label: "Status", href: "/status" },
     ],
   },
   {
     title: "Support",
     links: [
-      { label: "Help Center", href: "/help" },
-      { label: "Contact Us", href: "/contact" },
+      { label: "Help Center", href: "/profile?tab=support&new=1" },
+      { label: "Contact Us", href: "/profile?tab=support&new=1" },
       { label: "Terms", href: "/terms" },
       { label: "Privacy", href: "/privacy" },
     ],
