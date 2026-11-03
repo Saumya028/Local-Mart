@@ -192,6 +192,8 @@ export type Address = {
   city: string;
   state?: string | null;
   pincode?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   is_default: boolean;
 };
 

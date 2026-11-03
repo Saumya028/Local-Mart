@@ -39,7 +39,7 @@ from app.core.supabase_admin import (
     update_supabase_user_password,
 )
 from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
-from app.models import Order, OrderItem, Payment, Product, Profile, ReturnRequest, Shop
+from app.models import Order, OrderItem, Payment, PlatformSettings, Product, Profile, ReturnRequest, Shop
 from app.schemas.dashboard import (
     AnalyticsOut,
     DashboardMetrics,
@@ -221,7 +221,9 @@ async def my_shops(
         # endpoint — this stays scoped to owner_id even for an admin
         # caller, exactly as it already was).
         result = await db.execute(select(Shop).where(Shop.owner_id == user.id))
-    return result.scalars().all()
+    shops = result.scalars().all()
+    await _attach_radius_cap(db, shops)
+    return shops
 
 
 @router.put("/shops/{shop_id}", response_model=DashboardShopOut)
@@ -260,6 +262,23 @@ async def update_my_shop(
         merged_attributes = updates.get("attributes", shop.attributes)
         await validate_attributes(db, "shop", merged_category, merged_attributes)
 
+    if updates.get("delivery_radius_km") is not None:
+        platform = await db.get(PlatformSettings, 1)
+        max_km = float(platform.max_delivery_radius_km) if platform else 5.0
+        # Only enforce the cap when the radius is actually being CHANGED upward — the
+        # settings form re-sends the current value on every save, and a shop that was
+        # already above a (later lowered) cap must still be able to save other settings.
+        if float(updates["delivery_radius_km"]) > max(max_km, float(shop.delivery_radius_km)):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Delivery radius can be at most {max_km:g} km. "
+                    "The LocalMart admin can raise this limit in Admin → Settings → Max Delivery Radius."
+                ),
+            )
+    elif "delivery_radius_km" in updates:
+        raise HTTPException(status_code=400, detail="Delivery radius can't be empty")
+
     if updates.get("contact_phone", "x") is None:
         raise HTTPException(status_code=400, detail="A contact phone number is required")
 
@@ -294,7 +313,16 @@ async def update_my_shop(
     await db.refresh(shop)
 
     await invalidate("shops:list", f"shop:{shop_id}")
+    await _attach_radius_cap(db, [shop])
     return shop
+
+
+async def _attach_radius_cap(db: AsyncSession, shops) -> None:
+    """Expose the admin's max delivery radius on each shop (see DashboardShopOut)."""
+    platform = await db.get(PlatformSettings, 1)
+    cap = float(platform.max_delivery_radius_km) if platform else 5.0
+    for s in shops:
+        s.max_delivery_radius_km = cap
 
 
 def _dashboard_product(product: Product, shop_default: int) -> ProductDashboardOut:

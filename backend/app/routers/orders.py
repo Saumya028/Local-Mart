@@ -26,7 +26,8 @@ from app.core.payment_confirmation import (
 from app.core.rate_limit import rate_limit_by_user
 from app.core.security import get_current_user
 from app.core.shop_hours import describe_eta, zone_of
-from app.core.shop_plan import ShopPlan, list_slots, plan_shop_order
+from app.core.geo import delivery_range_problem
+from app.core.shop_plan import Issue, ShopPlan, list_slots, plan_shop_order
 from app.core.utils import parse_uuid_or_404
 from app.models import (
     Address,
@@ -237,6 +238,12 @@ async def checkout(
             if address is None or address.user_id != user.id:
                 raise HTTPException(status_code=404, detail="Address not found")
             delivery_address_snapshot = address.snapshot()
+            # A shop can only take a DELIVERY order if the address is inside
+            # ITS delivery radius (pickup shops are exempt).
+            for shop_id in items_by_shop.keys() - pickup_shop_ids:
+                problem = delivery_range_problem(shops_by_id[shop_id], address.lat, address.lng)
+                if problem:
+                    raise HTTPException(status_code=400, detail=problem)
 
         created_orders: list[Order] = []
         reserved_product_ids: list[uuid.UUID] = []
@@ -375,6 +382,11 @@ async def quote_order(
 
     now = datetime.now(timezone.utc)
     pickup = set(payload.pickup_shop_ids)
+    quote_address = None
+    if payload.address_id is not None:
+        quote_address = (
+            await db.execute(select(Address).where(Address.id == payload.address_id, Address.user_id == user.id))
+        ).scalar_one_or_none()
     out = []
     grand_total = Decimal("0")
     can_checkout = bool(groups)
@@ -386,6 +398,10 @@ async def quote_order(
         plan = await plan_shop_order(db, shop, subtotal, fulfillment, payload.slots.get(shop_id), now=now)
         plan.total += tax
         grand_total += plan.total
+        if fulfillment == "delivery" and quote_address is not None:
+            problem = delivery_range_problem(shop, quote_address.lat, quote_address.lng)
+            if problem:
+                plan.issues.append(Issue("out_of_range", problem))
         can_checkout = can_checkout and not plan.issues
         slot = plan.slot
         out.append(

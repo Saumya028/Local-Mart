@@ -1,5 +1,6 @@
 "use client";
 
+import { PriceTag } from "@/components/product/PriceTag";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiClient";
@@ -73,7 +74,7 @@ export function WishlistTab({ onLoaded }: { onLoaded?: (items: WishlistEntry[]) 
           <Link prefetch={false} href={`/product/${entry.product.id}`} className="min-w-0 flex-1">
             <p className="font-medium text-gray-900 text-sm truncate">{entry.product.name}</p>
             <p className="text-xs text-gray-400 truncate">{entry.shop_name}</p>
-            <p className="text-sm font-semibold text-gray-800 mt-1">₹{entry.product.price}</p>
+            <PriceTag p={entry.product} showStock={false} className="mt-1" />
             {(!entry.product.is_active || entry.product.stock_qty === 0) && (
               <p className="text-xs text-red-500 mt-0.5">Currently unavailable</p>
             )}

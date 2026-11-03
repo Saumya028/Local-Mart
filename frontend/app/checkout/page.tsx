@@ -27,6 +27,8 @@ type Address = {
   city: string;
   state?: string | null;
   pincode?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   is_default: boolean;
 };
 
@@ -214,7 +216,11 @@ export default function CheckoutPage() {
         const slots = Object.fromEntries(Object.entries(slotChoice).filter(([, v]) => v));
         const q: Quote = await apiFetch("/orders/quote", {
           method: "POST",
-          body: JSON.stringify({ pickup_shop_ids: pickupIdsKey ? pickupIdsKey.split(",") : [], slots }),
+          body: JSON.stringify({
+            pickup_shop_ids: pickupIdsKey ? pickupIdsKey.split(",") : [],
+            slots,
+            address_id: selectedAddressId || null,
+          }),
         });
         if (cancelled) return;
         setQuote(q);
@@ -240,7 +246,7 @@ export default function CheckoutPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingCart, cartItems.length, pickupIdsKey, slotKey, quoteNonce]);
+  }, [loadingCart, cartItems.length, pickupIdsKey, slotKey, quoteNonce, selectedAddressId]);
 
   // At least one shop set to "delivery" means the address section is
   // needed at all — an all-pickup cart never touches the address book.
@@ -490,6 +496,11 @@ export default function CheckoutPage() {
                   />
                   <span>
                     <span className="font-medium">{a.label}</span> — {addressLines(a).join(" · ")}
+                    {a.lat == null && (
+                      <span className="block text-xs text-amber-700">
+                        No map pin — add one in My Account → Addresses so we can check delivery range.
+                      </span>
+                    )}
                   </span>
                 </label>
               ))}

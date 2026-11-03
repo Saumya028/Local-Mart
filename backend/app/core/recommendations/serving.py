@@ -30,7 +30,6 @@ from app.core.recommendations import scoring
 from app.models import (
     Order,
     OrderItem,
-    PlatformSettings,
     Product,
     ProductPopularity,
     ProductReview,
@@ -90,11 +89,8 @@ async def active_run_id(db: AsyncSession) -> uuid.UUID | None:
 async def resolve_viewer(db: AsyncSession, lat: float | None, lng: float | None, radius_km: float | None) -> Viewer:
     if lat is None or lng is None:
         return Viewer()
-    radius = radius_km
-    if radius is None:
-        row = await db.get(PlatformSettings, 1)
-        radius = float(row.max_delivery_radius_km) if row else DEFAULT_RADIUS_KM
-    return Viewer(lat, lng, radius)
+    # Each shop's own delivery radius decides; radius_km is only an optional extra cap.
+    return Viewer(lat, lng, radius_km)
 
 
 def _excluded() -> list[str]:
@@ -138,9 +134,8 @@ def _eligible_stmt(viewer: Viewer, *, apply_excluded: bool = True, extra_columns
         )
     )
     if viewer.located:
-        stmt = stmt.where(
-            Shop.latitude.isnot(None), Shop.longitude.isnot(None), distance <= (viewer.radius_km or DEFAULT_RADIUS_KM)
-        )
+        cap = Shop.delivery_radius_km if not viewer.radius_km else func.least(Shop.delivery_radius_km, viewer.radius_km)
+        stmt = stmt.where(Shop.latitude.isnot(None), Shop.longitude.isnot(None), distance <= cap)
     if apply_excluded and _excluded():
         stmt = stmt.where(Product.category.notin_(_excluded()))
     return stmt

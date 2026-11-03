@@ -8,14 +8,20 @@ import { ShopReviewsSection } from "@/components/reviews/ShopReviewsSection";
 import { ShopInfoPanel, PublicShopInfo } from "@/components/shop/ShopInfoPanel";
 import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
 import { ReportShopButton } from "@/components/support/ReportShopButton";
+import { getServerLocation } from "@/lib/serverLocation";
 
-type Shop = PublicShopInfo & { id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
+type Shop = PublicShopInfo & { delivery_radius_km?: string | number; delivers_to_you?: boolean | null; id: string; name: string; category: string; rating: number; rating_count?: number; is_active: boolean; created_at: string };
 type Product = { id: string; name: string; price: string; mrp?: string | null; discount_percent?: number | null; unit_label?: string | null; stock_qty?: number; category: string; images: string[]; rating_avg?: number; rating_count?: number };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function getShop(id: string): Promise<Shop | null> {
+async function getShop(id: string, loc: { lat: number; lng: number } | null): Promise<Shop | null> {
   try {
+    if (loc) {
+      // Per-visitor answer ("does this shop deliver to me?") — not cached.
+      const res = await fetch(`${API_URL}/shops/${id}?lat=${loc.lat}&lng=${loc.lng}`, { cache: "no-store" });
+      return res.ok ? res.json() : null;
+    }
     // revalidate: 30 -> matches the backend's own Redis cache TTL for
     // GET /shops/{id} (60s) closely enough to stay roughly in sync,
     // same reasoning as the product detail page.
@@ -39,7 +45,8 @@ async function getShopProducts(id: string): Promise<Product[]> {
 
 export default async function StorePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const shop = await getShop(id);
+  const loc = await getServerLocation();
+  const shop = await getShop(id, loc);
   if (!shop) {
     // GET /shops/{id} 404s for a pending/rejected/deactivated shop too,
     // not only a genuinely nonexistent one — from a visitor's point of
@@ -67,6 +74,13 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
       </div>
+
+      {shop.delivers_to_you === false && (
+        <p className="text-sm bg-amber-50 border border-amber-100 text-amber-800 rounded-xl px-4 py-3">
+          This shop doesn&apos;t deliver to your current location (it delivers within {Number(shop.delivery_radius_km ?? 5)} km).
+          You can still order for pickup, or change your delivery location at the top of the page.
+        </p>
+      )}
 
       <ShopInfoPanel shop={shop} />
 

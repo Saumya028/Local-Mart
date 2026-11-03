@@ -164,6 +164,7 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
   const [fee, setFee] = useState(String(shop.delivery_fee ?? "0"));
   const [freeAbove, setFreeAbove] = useState(shop.free_delivery_above != null ? String(shop.free_delivery_above) : "");
   const [minOrder, setMinOrder] = useState(String(shop.min_order_amount ?? "0"));
+  const [radius, setRadius] = useState(String(shop.delivery_radius_km ?? "5"));
 
   const [prep, setPrep] = useState(String(shop.prep_time_minutes ?? 30));
   const [deliv, setDeliv] = useState(String(shop.delivery_time_minutes ?? 30));
@@ -184,9 +185,14 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
     setSaved(false);
+    const cap = shop.max_delivery_radius_km;
+    if (cap && Number(radius) > Math.max(cap, Number(shop.delivery_radius_km ?? 0))) {
+      setError(`Delivery radius can be at most ${cap} km. Ask the LocalMart admin to raise “Max Delivery Radius” in Admin → Settings.`);
+      return;
+    }
+    setSaving(true);
     try {
       const payload: Record<string, unknown> = {
         description: about,
@@ -197,6 +203,7 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
         delivery_fee: fee || "0",
         free_delivery_above: freeAbove ? freeAbove : null,
         min_order_amount: minOrder || "0",
+        delivery_radius_km: radius || "5",
         prep_time_minutes: Number(prep || 0),
         delivery_time_minutes: Number(deliv || 0),
         slots_enabled: hoursOn && slotsOn,
@@ -311,6 +318,27 @@ export function StoreSettingsTab({ shop, onSaved }: { shop: Shop; onSaved: (upda
               <input type="datetime-local" value={closedUntil} onChange={(e) => setClosedUntil(e.target.value)} className={input} />
             </Field>
           </div>
+        )}
+      </Section>
+
+      <Section
+        title="Delivery area"
+        hint="Customers only see your shop — and can only order delivery from you — when they are inside this distance from your shop (straight line)."
+      >
+        <div className="grid sm:grid-cols-3 gap-4">
+          <Field
+            label="Delivery radius (km)"
+            hint={`e.g. 2 = you deliver up to 2 km away. Pickup is never limited by distance.${
+              shop.max_delivery_radius_km ? ` LocalMart's maximum is ${shop.max_delivery_radius_km} km.` : ""
+            }`}
+          >
+            <input type="number" min="0.5" max={shop.max_delivery_radius_km ?? 100} step="0.5" value={radius} onChange={(e) => setRadius(e.target.value)} className={input} />
+          </Field>
+        </div>
+        {!shop.latitude && (
+          <p className="text-xs bg-amber-50 border border-amber-100 text-amber-800 rounded-md px-3 py-2">
+            Your shop has no map location saved, so it can&apos;t appear to customers yet. Contact support to add it.
+          </p>
         )}
       </Section>
 

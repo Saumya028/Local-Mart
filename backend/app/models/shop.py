@@ -142,6 +142,12 @@ class Shop(Base):
     # Minimum item subtotal for a delivery order. 0 = no minimum.
     min_order_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, server_default="0")
 
+    # How far from the shop (km, straight line) it delivers. A customer only
+    # sees this shop — and checkout only accepts a delivery order — when their
+    # delivery point is inside this radius. Capped by the platform's
+    # max_delivery_radius_km when the owner sets it.
+    delivery_radius_km: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=5, server_default="5")
+
     # ---- GST / invoicing ----------------------------------------------
     # The shop's own GSTIN (unset = unregistered: invoices say "Invoice",
     # not "Tax Invoice") and the legal name to print on them.

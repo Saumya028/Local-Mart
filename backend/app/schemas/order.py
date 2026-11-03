@@ -33,6 +33,8 @@ class CheckoutRequest(BaseModel):
 
 
 class QuoteRequest(BaseModel):
+    # Optional: lets the quote warn about shops that don't deliver to this address.
+    address_id: uuid.UUID | None = None
     pickup_shop_ids: list[uuid.UUID] = []
     slots: dict[uuid.UUID, datetime] = {}
 

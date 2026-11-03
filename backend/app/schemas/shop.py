@@ -136,6 +136,9 @@ class ShopUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(default=None, ge=0, le=5000, decimal_places=2)
     free_delivery_above: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
     min_order_amount: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
+    # How far this shop delivers (km). Checked against the platform maximum
+    # in PUT /dashboard/shops/{id}.
+    delivery_radius_km: Decimal | None = Field(default=None, gt=0, le=100, decimal_places=2)
     # ---- timing ----------------------------------------------------------
     prep_time_minutes: int | None = Field(default=None, ge=0, le=720)
     delivery_time_minutes: int | None = Field(default=None, ge=0, le=720)
@@ -284,6 +287,9 @@ class ShopOut(BaseModel):
     delivery_fee: Decimal = Decimal("0")
     free_delivery_above: Decimal | None = None
     min_order_amount: Decimal = Decimal("0")
+    delivery_radius_km: Decimal = Decimal("5")
+    # Only set by GET /shops/{id}?lat=&lng= : does this shop deliver to that point?
+    delivers_to_you: bool | None = None
     prep_time_minutes: int = 30
     delivery_time_minutes: int = 30
     slots_enabled: bool = False
@@ -302,6 +308,9 @@ class DashboardShopOut(ShopOut):
 
     approval_status: str
     docs_status: str
+    # The platform-wide ceiling for delivery_radius_km (admin setting), so the
+    # settings form can show it instead of failing on save.
+    max_delivery_radius_km: float | None = None
     # Owner can see their own promotion status (never exposed publicly —
     # customers just see the resulting ranking).
     sponsored_until: datetime | None = None

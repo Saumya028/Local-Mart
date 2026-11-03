@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { Suspense } from "react";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
-import { NearMeToggle } from "@/components/stores/NearMeToggle";
+import { SetLocationPrompt } from "@/components/location/SetLocationPrompt";
+import { getServerLocation } from "@/lib/serverLocation";
 import { BannerSlot } from "@/components/banners/BannerSlot";
 import { RatingBadge } from "@/components/reviews/StarRating";
 import { ShopStatusBadge } from "@/components/shop/ShopStatusBadge";
@@ -22,14 +22,12 @@ type Shop = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function searchShops(q?: string, category?: string, lat?: string, lng?: string): Promise<Shop[]> {
+async function searchShops(q?: string, category?: string, lat?: number, lng?: number): Promise<Shop[]> {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (category) params.set("category", category);
-  if (lat && lng) {
-    params.set("lat", lat);
-    params.set("lng", lng);
-  }
+  params.set("lat", String(lat));
+  params.set("lng", String(lng));
   params.set("limit", "100");
 
   try {
@@ -47,11 +45,18 @@ export default async function StoresPage({
   searchParams: searchParamsPromise,
 }: {
   // In Next.js 15+ searchParams is a Promise and must be awaited.
-  searchParams: Promise<{ q?: string; category?: string; lat?: string; lng?: string }>;
+  searchParams: Promise<{ q?: string; category?: string }>;
 }) {
   const searchParams = await searchParamsPromise;
-  const shops = await searchShops(searchParams.q, searchParams.category, searchParams.lat, searchParams.lng);
-  const nearMeActive = Boolean(searchParams.lat && searchParams.lng);
+  const loc = await getServerLocation();
+  if (!loc) {
+    return (
+      <main className="max-w-6xl mx-auto px-6 py-16">
+        <SetLocationPrompt />
+      </main>
+    );
+  }
+  const shops = await searchShops(searchParams.q, searchParams.category, loc.lat, loc.lng);
 
   const heading = searchParams.category
     ? `${searchParams.category} stores`
@@ -64,11 +69,8 @@ export default async function StoresPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{heading}</h1>
-          <p className="text-sm text-gray-500 mt-1">{shops.length} shop{shops.length === 1 ? "" : "s"}</p>
+          <p className="text-sm text-gray-500 mt-1">{shops.length} shop{shops.length === 1 ? "" : "s"} deliver to you</p>
         </div>
-        <Suspense fallback={null}>
-          <NearMeToggle active={nearMeActive} radiusKm={null} />
-        </Suspense>
       </div>
 
       <BannerSlot slot="stores_top" promptForLocation className="!px-0" />
@@ -81,12 +83,6 @@ export default async function StoresPage({
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {searchParams.category && <input type="hidden" name="category" value={searchParams.category} />}
-        {nearMeActive && (
-          <>
-            <input type="hidden" name="lat" value={searchParams.lat} />
-            <input type="hidden" name="lng" value={searchParams.lng} />
-          </>
-        )}
         <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition">
           Search
         </button>
@@ -100,9 +96,7 @@ export default async function StoresPage({
 
       {shops.length === 0 ? (
         <p className="text-sm text-gray-400">
-          {nearMeActive
-            ? "No stores found within delivery range of your location."
-            : "No stores found."}
+          No stores deliver to your location{searchParams.q || searchParams.category ? " for that search" : " yet"}.
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">

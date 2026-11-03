@@ -1,7 +1,7 @@
 import { PriceTag } from "@/components/product/PriceTag";
-import { Suspense } from "react";
 import Link from "next/link";
-import { NearMeToggle } from "@/components/stores/NearMeToggle";
+import { SetLocationPrompt } from "@/components/location/SetLocationPrompt";
+import { getServerLocation } from "@/lib/serverLocation";
 import { BannerSlot } from "@/components/banners/BannerSlot";
 import { categoryIcon, categoryBg } from "@/lib/categoryVisuals";
 import { RatingBadge } from "@/components/reviews/StarRating";
@@ -25,10 +25,10 @@ type Product = {
 const PAGE_SIZE = 24;
 
 async function searchProducts(
-  q?: string,
-  category?: string,
-  lat?: string,
-  lng?: string,
+  q: string | undefined,
+  category: string | undefined,
+  lat: number,
+  lng: number,
   page = 1,
 ): Promise<{ products: Product[]; hasMore: boolean }> {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -38,10 +38,8 @@ async function searchProducts(
   params.set("offset", String((page - 1) * PAGE_SIZE));
   if (q) params.set("q", q);
   if (category) params.set("category", category);
-  if (lat && lng) {
-    params.set("lat", lat);
-    params.set("lng", lng);
-  }
+  params.set("lat", String(lat));
+  params.set("lng", String(lng));
 
   try {
     // no-store: search results should always reflect the current query,
@@ -59,30 +57,27 @@ export default async function SearchPage({
   searchParams: searchParamsPromise,
 }: {
   // In Next.js 15+ searchParams is a Promise and must be awaited.
-  searchParams: Promise<{ q?: string; category?: string; lat?: string; lng?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; category?: string; page?: string }>;
 }) {
   const searchParams = await searchParamsPromise;
   const page = Math.min(Math.max(parseInt(searchParams.page ?? "1", 10) || 1, 1), 400);
-  const { products, hasMore } = await searchProducts(
-    searchParams.q,
-    searchParams.category,
-    searchParams.lat,
-    searchParams.lng,
-    page,
-  );
+  const loc = await getServerLocation();
+  if (!loc) {
+    return (
+      <main className="max-w-5xl mx-auto px-6 py-16">
+        <SetLocationPrompt />
+      </main>
+    );
+  }
+  const { products, hasMore } = await searchProducts(searchParams.q, searchParams.category, loc.lat, loc.lng, page);
   const pageHref = (n: number) => {
     const qs = new URLSearchParams();
     if (searchParams.q) qs.set("q", searchParams.q);
     if (searchParams.category) qs.set("category", searchParams.category);
-    if (searchParams.lat && searchParams.lng) {
-      qs.set("lat", searchParams.lat);
-      qs.set("lng", searchParams.lng);
-    }
     if (n > 1) qs.set("page", String(n));
     const str = qs.toString();
     return str ? `/search?${str}` : "/search";
   };
-  const nearMeActive = Boolean(searchParams.lat && searchParams.lng);
 
   const heading = searchParams.category
     ? `Category: ${searchParams.category}`
@@ -94,9 +89,6 @@ export default async function SearchPage({
     <main className="max-w-5xl mx-auto px-6 py-10 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{heading}</h1>
-        <Suspense fallback={null}>
-          <NearMeToggle active={nearMeActive} radiusKm={null} basePath="/search" label="results from shops" />
-        </Suspense>
       </div>
 
       <BannerSlot slot="search_top" promptForLocation className="!px-0" />
@@ -109,25 +101,19 @@ export default async function SearchPage({
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {searchParams.category && <input type="hidden" name="category" value={searchParams.category} />}
-        {nearMeActive && (
-          <>
-            <input type="hidden" name="lat" value={searchParams.lat} />
-            <input type="hidden" name="lng" value={searchParams.lng} />
-          </>
-        )}
         <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition">
           Search
         </button>
       </form>
 
       {searchParams.category && (
-        <Link href={nearMeActive ? `/search?lat=${searchParams.lat}&lng=${searchParams.lng}` : "/search"} className="text-sm text-blue-600 hover:underline inline-block">
+        <Link href="/search" className="text-sm text-blue-600 hover:underline inline-block">
           ← Clear category filter
         </Link>
       )}
 
       {products.length === 0 ? (
-        <p className="text-sm text-gray-400">{nearMeActive ? "No matching products from shops near you." : "No products found."}</p>
+        <p className="text-sm text-gray-400">No matching products from shops that deliver to you.</p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {products.map((p) => (

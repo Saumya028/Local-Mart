@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import AddressForm from "@/components/AddressForm";
 import { addressLines } from "@/lib/customerFields";
+import { getCurrentPosition } from "@/lib/useViewerLocation";
 import { Address } from "./types";
 
 export function AddressesTab() {
@@ -53,6 +54,20 @@ export function AddressesTab() {
     }
   }
 
+  async function pinAddress(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const pos = await getCurrentPosition();
+      await apiFetch(`/addresses/${id}`, { method: "PUT", body: JSON.stringify({ lat: pos.lat, lng: pos.lng }) });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (loading) return <p className="text-sm text-gray-400">Loading addresses…</p>;
 
   return (
@@ -91,8 +106,14 @@ export function AddressesTab() {
                     {line}
                   </p>
                 ))}
+                <p className={`text-xs mt-1 ${a.lat != null ? "text-emerald-600" : "text-amber-700"}`}>
+                  {a.lat != null ? "📍 Map pin saved" : "No map pin — shops can't be matched to this address yet"}
+                </p>
               </div>
               <div className="flex gap-3 text-xs shrink-0">
+                <button onClick={() => pinAddress(a.id)} disabled={busyId === a.id} className="text-blue-600 hover:underline disabled:opacity-50">
+                  {a.lat != null ? "Re-pin here" : "Pin to my current location"}
+                </button>
                 {!a.is_default && (
                   <button onClick={() => setDefault(a.id)} disabled={busyId === a.id} className="text-blue-600 hover:underline disabled:opacity-50">
                     Set default

@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.attribute_validation import validate_attributes
 from app.core.cache import cache_get_or_set, invalidate
 from app.core.db import get_db
+from app.core.geo import haversine_km
 from app.core.security import get_current_user
 from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
-from app.models import PlatformSettings, Profile, Shop
+from app.models import Profile, Shop
 from app.schemas.shop import ShopCreate, ShopOut
 
 router = APIRouter(prefix="/shops", tags=["shops"])
@@ -39,6 +40,15 @@ def _distance_expr(lat: float, lng: float):
     return EARTH_RADIUS_KM * func.acos(func.greatest(-1.0, func.least(1.0, cos_angle)))
 
 
+def _within_delivery_radius(distance, extra_cap_km: float | None = None):
+    """The customer is inside THIS shop's own delivery radius (optionally
+    also under a caller-supplied cap)."""
+    cap = Shop.delivery_radius_km
+    if extra_cap_km is not None:
+        cap = func.least(cap, extra_cap_km)
+    return distance <= cap
+
+
 def _sponsored_rank():
     """1 while a shop's paid promotion is active, else 0 — sort DESC on
     this to put paying shops first. Evaluated in SQL against now(), so a
@@ -55,7 +65,7 @@ async def list_shops(
     lat: float | None = Query(default=None, description="Customer's latitude — filters shops by radius_km"),
     lng: float | None = Query(default=None, description="Customer's longitude — used together with lat"),
     radius_km: float | None = Query(
-        default=None, gt=0, description="Defaults to the platform's max delivery radius setting"
+        default=None, gt=0, description="Optional extra cap; each shop's own delivery radius always applies"
     ),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10_000, description="Skip this many shops (pagination)"),
@@ -94,11 +104,6 @@ async def list_shops(
     # compute a distance, so treat it the same as neither being given
     # rather than erroring on what's likely a frontend bug.
     if lat is not None and lng is not None:
-        radius = radius_km
-        if radius is None:
-            settings_row = await db.get(PlatformSettings, 1)
-            radius = float(settings_row.max_delivery_radius_km) if settings_row else DEFAULT_RADIUS_KM
-
         distance = _distance_expr(lat, lng)
         stmt = (
             select(Shop, distance.label("distance_km"))
@@ -107,7 +112,7 @@ async def list_shops(
                 Shop.approval_status == "approved",
                 Shop.latitude.isnot(None),
                 Shop.longitude.isnot(None),
-                distance <= radius,
+                _within_delivery_radius(distance, radius_km),
             )
         )
         if category is not None:
@@ -200,7 +205,12 @@ async def create_shop(
 
 
 @router.get("/{shop_id}", response_model=ShopOut)
-async def get_shop(shop_id: str, db: AsyncSession = Depends(get_db)):
+async def get_shop(
+    shop_id: str,
+    lat: float | None = Query(default=None, ge=-90, le=90),
+    lng: float | None = Query(default=None, ge=-180, le=180),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Backs the public storefront page (`/store/[id]`). Filters on the same
     is_active + approval_status == "approved" rule as list_shops above —
@@ -222,4 +232,12 @@ async def get_shop(shop_id: str, db: AsyncSession = Depends(get_db)):
     data = await cache_get_or_set(f"shop:{shop_id}", ttl_seconds=60, loader=load)
     if data is None:
         raise HTTPException(status_code=404, detail="Shop not found")
+    if lat is not None and lng is not None:
+        # Computed per request on top of the cached shop JSON.
+        data = dict(data)
+        data["delivers_to_you"] = (
+            data.get("latitude") is not None
+            and data.get("longitude") is not None
+            and haversine_km(lat, lng, data["latitude"], data["longitude"]) <= float(data["delivery_radius_km"])
+        )
     return data

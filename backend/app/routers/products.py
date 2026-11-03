@@ -6,9 +6,9 @@ from app.core.attribute_validation import get_schema_fields
 from app.core.cache import cache_get_or_set
 from app.core.db import get_db
 from app.core.utils import LIKE_ESCAPE_CHAR, escape_like, parse_uuid_or_404
-from app.models import PlatformSettings, Product, Shop
+from app.models import Product, Shop
 from app.schemas.product import ProductDetailOut, ProductOut, ProductSearchOut, VariantSummary
-from app.routers.shops import DEFAULT_RADIUS_KM, _distance_expr
+from app.routers.shops import _distance_expr, _within_delivery_radius
 from app.schemas.shop import ShopOut
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -100,7 +100,7 @@ async def search_products(
     lat: float | None = Query(default=None, description="Customer's latitude — limits results to nearby shops"),
     lng: float | None = Query(default=None, description="Customer's longitude — used together with lat"),
     radius_km: float | None = Query(
-        default=None, gt=0, description="Defaults to the platform's max delivery radius setting"
+        default=None, gt=0, description="Optional extra cap; each shop's own delivery radius always applies"
     ),
     limit: int = Query(default=24, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10_000, description="Skip this many results (pagination)"),
@@ -120,8 +120,8 @@ async def search_products(
       4. nearer shops first when lat/lng were given, else higher-rated
          shops first; then newest.
 
-    With `lat`+`lng`, results are limited to shops within `radius_km`
-    (default: the platform's max delivery radius), so "sponsored first"
+    With `lat`+`lng`, results are limited to shops whose OWN delivery radius
+    covers that point, so "sponsored first"
     applies among the shops that actually serve the customer's area — a
     shop across the city never outranks a local one just by paying.
     Sponsorship only changes the order — it is not exposed to customers.
@@ -163,12 +163,8 @@ async def search_products(
     )
 
     if use_location:
-        radius = radius_km
-        if radius is None:
-            settings_row = await db.get(PlatformSettings, 1)
-            radius = float(settings_row.max_delivery_radius_km) if settings_row else DEFAULT_RADIUS_KM
         stmt = stmt.where(
-            Shop.latitude.isnot(None), Shop.longitude.isnot(None), distance <= radius
+            Shop.latitude.isnot(None), Shop.longitude.isnot(None), _within_delivery_radius(distance, radius_km)
         )
 
     if category:

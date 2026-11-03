@@ -44,6 +44,8 @@ export type Shop = {
   delivery_fee?: string | number;
   free_delivery_above?: string | number | null;
   min_order_amount?: string | number;
+  delivery_radius_km?: string | number;
+  max_delivery_radius_km?: number | null;
   prep_time_minutes?: number;
   delivery_time_minutes?: number;
   slots_enabled?: boolean;

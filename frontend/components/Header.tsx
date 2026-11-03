@@ -6,6 +6,7 @@ import { useState } from "react";
 import AuthStatus from "./AuthStatus";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { useAuth } from "@/contexts/AuthContext";
+import { DeliverToPicker } from "./location/DeliverToPicker";
 
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
@@ -96,11 +97,13 @@ export default function Header() {
               {link.label}
             </Link>
           ))}
+          <DeliverToPicker />
           <NotificationBell />
           <AuthStatus />
         </nav>
 
         <div className="md:hidden flex items-center gap-2">
+        <DeliverToPicker />
         <NotificationBell />
         <button
           type="button"
