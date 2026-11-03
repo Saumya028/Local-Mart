@@ -417,7 +417,7 @@ Not built yet: ordering open shops first in listings, holiday-specific hours (us
 
 **Low-stock alerts** (`core/stock_alerts.py`) — a product is "low" at/below its `low_stock_threshold` (else the shop's default `shops.low_stock_threshold`, 5) and "out" at 0. The owner and managers get a bell + email notification **once when a product enters low, and once when it sells out** — not on every sale. Restocking re-arms it silently. The state change is a compare-and-set, so simultaneous sales still send exactly one alert (tested). Edits made by the owner themselves update the state without notifying them. `GET /dashboard/products?stock=low|out` and `GET /dashboard/products/stock-summary` power the Inventory tab and the dashboard banner.
 
-Not built yet: barcode scanning with the phone camera (the site's Permissions-Policy currently blocks the camera), bulk CSV import/export of prices and stock, price history, per-variant MRP editing in bulk, GST rates/HSN codes (planned with invoices).
+Not built yet: barcode scanning with the phone camera (the site's Permissions-Policy currently blocks the camera), CSV export of prices and stock, price history, per-variant MRP editing in bulk, GST rates/HSN codes (planned with invoices).
 
 
 ## Customer support: reports, disputes & admin resolution (migration 0028)
@@ -461,3 +461,20 @@ Every notification still appears in the in-app bell. **Email is an explicit allo
 - Emails already queued before this change are still delivered (the outbox is untouched); only new notifications follow the policy.
 - **Promotional email is not built.** When it is, it must be opt-in (a consent checkbox at signup and in Settings, off until ticked) and carry an unsubscribe link.
 - To email another kind, add `(audience, kind)` to `EMAILED` and extend `tests/test_email_policy.py`.
+
+## Bulk product upload: pictures and variants
+
+The shop dashboard's **Import from CSV** now also brings in each product's pictures and sets up variants (`app/core/product_csv.py` documents every column; **Download template** has a worked oil example).
+
+**Pictures** — the CSV's `images` column lists file names separated by `|` (`oil-500ml.jpg|oil-500ml-back.jpg`; up to 8 per product, `.jpg/.jpeg/.png/.webp/.gif`, matched ignoring case). The seller **selects those picture files together with the CSV** — no links. The flow is two-step so nothing is saved by surprise:
+1. Choosing the CSV runs a **dry run**; the response lists `image_files` (the names the screen must have) and the screen shows which pictures are still missing.
+2. **Import** uploads each needed picture once (through the existing `prepareImage` + `product-images` bucket path, under the seller's own folder) and then sends the CSV again with `image_map` (file name → uploaded link). If any upload fails, the catalogue is never touched. The API only accepts links inside **our own `product-images` bucket** — a link to another website, in the CSV or in `image_map`, is refused.
+- Every row has **its own pictures** (variants included). On an **update**, a blank `images` cell leaves the product's pictures alone and a filled one **replaces** them.
+
+**Variants** — rows that share a `variant_group` become one product family (each row stays its own product: own SKU, price, stock, pictures; the group only links them, via the same `variant_group_id` the product form uses, so the storefront shows the usual picker).
+- `variant_options` says what differs (`Size=500 ml`, several with `|`). If it's blank, the label is filled in as `Size = <pack size>` from `unit_value` + `unit`, e.g. `Size = 500 ml` / `Size = 1 L`.
+- Checked before anything is saved (reported by line number): a group needs at least 2 rows; every variant in a group must use the same option names; no two variants may have the same options; `variant_options` needs a `variant_group` (except to relabel a product already in one); and two products from *different* existing groups can't be merged by accident.
+- **Add a size to an existing group**: include one product already in the group (just `sku` + `variant_group`) plus the new row; it joins that group and is checked against the siblings already stored.
+- Ungrouping a product isn't done through the CSV.
+
+Tests: `tests/test_product_csv_images_variants.py` (parsers, the planner, and end-to-end imports of the oil example including the storefront picker).

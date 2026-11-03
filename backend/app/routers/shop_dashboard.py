@@ -49,7 +49,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, EtaUpdate, OrderStatusUpdate
 from app.schemas.notification import OrderEventOut
-from app.core.product_csv import CsvError, parse_csv, validate_row
+from app.core.product_csv import CsvError, is_own_image_url, parse_csv, plan_variants, resolve_images, validate_row
 from app.schemas.product import ProductCreate, ProductDashboardOut, ProductImportRequest, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
@@ -534,6 +534,11 @@ async def import_products_csv(
     the columns). Matching is by SKU within this shop: existing SKU -> update
     (blank cells leave a field unchanged), new SKU -> create.
 
+    Also brings in each product's PICTURES (file names in the `images` column;
+    the browser uploads the files and sends their links in `image_map`) and
+    sets up VARIANTS (rows sharing a `variant_group`, e.g. an oil in 500 ml and
+    1 l, each its own product linked by one variant_group_id).
+
     All-or-nothing: if ANY row is invalid nothing is saved and every problem
     is reported with its line number, so the file can be fixed and re-sent.
     With dry_run (the default) nothing is ever saved — it's the preview step.
@@ -548,6 +553,11 @@ async def import_products_csv(
     except CsvError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Every picture link must be inside OUR storage bucket — never another site.
+    image_map = {name.strip().lower(): url for name, url in payload.image_map.items()}
+    if any(not is_own_image_url(url) for url in image_map.values()):
+        raise HTTPException(status_code=400, detail="Some uploaded pictures don't have a valid LocalMart link — please try again")
+
     existing = {
         (p.sku or "").lower(): p
         for p in (await db.execute(select(Product).where(Product.shop_id == shop.id, Product.sku.is_not(None)))).scalars()
@@ -559,13 +569,21 @@ async def import_products_csv(
         ).all()
     }
 
-    errors: list[dict] = []
-    plan: list[tuple[str, Product | None, dict]] = []
+    errors: dict[int, dict] = {}
+
+    def add_problems(line: int, sku: str | None, messages: list[str]) -> None:
+        entry = errors.setdefault(line, {"line": line, "sku": sku or None, "messages": []})
+        entry["messages"] += messages
+
+    candidates: list[dict] = []
     seen_skus: dict[str, int] = {}
     seen_barcodes: dict[str, str] = {}
+    group_sizes: dict[str, int] = {}
     for line, raw in rows:
         sku_text = raw.get("sku", "")
         key = sku_text.strip().lower()
+        if raw.get("variant_group"):
+            group_sizes[raw["variant_group"].strip().lower()] = group_sizes.get(raw["variant_group"].strip().lower(), 0) + 1
         problems: list[str] = []
         if key and key in seen_skus:
             problems.append(f"SKU '{sku_text}' already appears on line {seen_skus[key]} of this file")
@@ -605,11 +623,73 @@ async def import_products_csv(
                         for m in exc.detail.get("attribute_errors", [])
                     ]
         if problems:
-            errors.append({"line": line, "sku": sku_text or None, "messages": problems})
+            add_problems(line, sku_text, problems)
         elif clean is not None:
-            plan.append(("update" if product is not None else "create", product, clean))
+            candidates.append({"line": line, "sku": sku_text, "key": key, "product": product, "clean": clean})
 
-    to_create = sum(1 for a, _, _ in plan if a == "create")
+    # ---- pictures: file names -> links (names are looked up once the files are uploaded)
+    image_files: dict[str, str] = {}
+    for c in candidates:
+        tokens = c["clean"].pop("_images", None)
+        c["image_tokens"] = tokens
+        c["image_urls"] = None
+        if tokens is not None:
+            for t in tokens:
+                if not t.lower().startswith(("http://", "https://")):
+                    image_files.setdefault(t.lower(), t)
+            urls, image_problems = resolve_images(tokens, image_map, check_files=not payload.dry_run)
+            c["image_urls"] = urls
+            if image_problems:
+                add_problems(c["line"], c["sku"], image_problems)
+
+    # ---- variants: rows sharing a variant_group become one linked family
+    entries = []
+    for c in candidates:
+        p, clean = c["product"], c["clean"]
+        entries.append(
+            {
+                "line": c["line"],
+                "sku": c["sku"],
+                "sku_lc": c["key"],
+                "group": clean.pop("_group", None),
+                "options": clean.pop("_options", None),
+                "unit_value": clean["unit_value"] if "unit_value" in clean else (p.unit_value if p else None),
+                "unit": clean["unit"] if "unit" in clean else (p.unit if p else None),
+                "existing_group_id": p.variant_group_id if p else None,
+                "existing_options": dict(p.variant_attributes or {}) if p else {},
+            }
+        )
+    labelled_skus = {e["sku_lc"] for e in entries if e["group"]}
+    group_ids = {e["existing_group_id"] for e in entries if e["group"] and e["existing_group_id"]}
+    siblings: dict[uuid.UUID, list[dict]] = {}
+    sibling_ids: list[uuid.UUID] = []
+    if group_ids:
+        for sib in (
+            await db.execute(select(Product).where(Product.shop_id == shop.id, Product.variant_group_id.in_(group_ids)))
+        ).scalars():
+            sibling_ids.append(sib.id)
+            if (sib.sku or "").lower() not in labelled_skus:
+                siblings.setdefault(sib.variant_group_id, []).append({"sku": sib.sku or sib.name, "options": dict(sib.variant_attributes or {})})
+    assignments, variant_problems, variant_groups = plan_variants(entries, group_sizes, siblings)
+    for line, messages in variant_problems.items():
+        add_problems(line, next((c["sku"] for c in candidates if c["line"] == line), None), messages)
+
+    bad_lines = set(errors)
+    plan = [
+        {
+            "action": "update" if c["product"] is not None else "create",
+            "product": c["product"],
+            "clean": c["clean"],
+            "image_urls": c["image_urls"],
+            "variant": assignments.get(c["line"]),
+            "tokens": c["image_tokens"],
+        }
+        for c in candidates
+        if c["line"] not in bad_lines
+    ]
+    error_list = sorted(errors.values(), key=lambda e: e["line"])
+
+    to_create = sum(1 for e in plan if e["action"] == "create")
     to_update = len(plan) - to_create
     result = {
         "columns": [c for c in columns if not c.startswith("?")],
@@ -617,26 +697,48 @@ async def import_products_csv(
         "total_rows": len(rows),
         "to_create": to_create,
         "to_update": to_update,
-        "errors": errors,
+        "errors": error_list,
         "applied": False,
+        # Pictures the browser must upload before the real import (names as typed in the CSV).
+        "image_files": sorted(image_files.values(), key=str.lower),
+        "variant_groups": variant_groups[:30],
         "preview": [
-            {"sku": c["sku"], "action": a, "name": c.get("name") or (p.name if p else None)} for a, p, c in plan[:15]
+            {
+                "sku": e["clean"]["sku"],
+                "action": e["action"],
+                "name": e["clean"].get("name") or (e["product"].name if e["product"] else None),
+                "images": len(e["tokens"]) if e["tokens"] is not None else None,
+                "variant": _label_options(e["variant"][1]) if e["variant"] else None,
+            }
+            for e in plan[:15]
         ],
     }
-    if errors or payload.dry_run or not plan:
+    if error_list or payload.dry_run or not plan:
         return result
 
     touched: list[uuid.UUID] = []
     try:
-        for action, product, clean in plan:
-            if action == "update":
+        for e in plan:
+            product, clean = e["product"], e["clean"]
+            if e["action"] == "update":
                 for k, v in clean.items():
                     if k != "sku":
                         setattr(product, k, v)
+                if e["image_urls"] is not None:  # a filled cell REPLACES the pictures; blank leaves them
+                    product.images = e["image_urls"]
+                if e["variant"]:
+                    product.variant_group_id, product.variant_attributes = e["variant"]
                 touched.append(product.id)
             else:
                 data = {k: v for k, v in clean.items() if v is not None}
-                new = Product(id=uuid.uuid4(), shop_id=shop.id, **data)
+                new = Product(
+                    id=uuid.uuid4(),
+                    shop_id=shop.id,
+                    images=e["image_urls"] or [],
+                    variant_group_id=e["variant"][0] if e["variant"] else None,
+                    variant_attributes=e["variant"][1] if e["variant"] else {},
+                    **data,
+                )
                 db.add(new)
                 touched.append(new.id)
         await db.flush()
@@ -645,9 +747,14 @@ async def import_products_csv(
         raise HTTPException(status_code=409, detail=_integrity_message(exc)) from exc
     await sync_stock_alerts(db, touched, notify=False)
     await db.commit()
-    await invalidate("categories:list", *[f"product:{pid}" for pid in touched])
+    # A product page also embeds its siblings' picker, so refresh the whole family.
+    await invalidate("categories:list", *[f"product:{pid}" for pid in {*touched, *sibling_ids}])
     result["applied"] = True
     return result
+
+
+def _label_options(options: dict) -> str:
+    return ", ".join(f"{k} = {v}" for k, v in options.items())
 
 
 @router.delete("/products/{product_id}")

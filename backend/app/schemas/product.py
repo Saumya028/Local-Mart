@@ -257,3 +257,7 @@ class ProductImportRequest(BaseModel):
     shop_id: uuid.UUID
     csv_text: str = Field(max_length=3_000_000)
     dry_run: bool = True
+    # file name (as written in the CSV's `images` column) -> link of the picture the
+    # browser uploaded to our product-images bucket. Only needed when dry_run is
+    # false; every link is checked to be inside our own bucket.
+    image_map: dict[str, str] = Field(default_factory=dict, max_length=5000)

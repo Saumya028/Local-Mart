@@ -2,6 +2,8 @@
 
 import { ChangeEvent, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
+import { useAuth } from "@/contexts/AuthContext";
+import { uploadProductImage } from "@/lib/imageUpload";
 
 type RowError = { line: number; sku: string | null; messages: string[] };
 type ImportResult = {
@@ -12,14 +14,19 @@ type ImportResult = {
   to_update: number;
   errors: RowError[];
   applied: boolean;
-  preview: { sku: string; action: "create" | "update"; name: string | null }[];
+  // File names the CSV refers to — the pictures that must be uploaded before importing.
+  image_files: string[];
+  variant_groups: { name: string; rows: number; options: string[] }[];
+  preview: { sku: string; action: "create" | "update"; name: string | null; images: number | null; variant: string | null }[];
 };
 
 // Keep in sync with backend app/core/product_csv.py (COLUMNS / template_csv).
 const TEMPLATE =
-  "sku,name,price,category,stock_qty,description,mrp,unit_value,unit,barcode,gst_rate,hsn_code,low_stock_threshold,is_active\n" +
-  "GHEE-1L,Amul Ghee,550,Grocery,40,Pure cow ghee,580,1,l,,12,04059020,5,yes\n" +
-  "ATTA-5KG,Aashirvaad Atta,265,Grocery,25,,,5,kg,,0,,,yes\n";
+  "sku,name,price,category,stock_qty,description,mrp,unit_value,unit,barcode,gst_rate,hsn_code,low_stock_threshold,is_active,images,variant_group,variant_options\n" +
+  "GHEE-1L,Amul Ghee,550,Grocery,40,Pure cow ghee,580,1,l,,12,04059020,5,yes,ghee-1l.jpg,,\n" +
+  "ATTA-5KG,Aashirvaad Atta,265,Grocery,25,,,5,kg,,0,,,yes,atta-5kg.jpg|atta-5kg-back.jpg,,\n" +
+  "OIL-500ML,Fortune Sunflower Oil,95,Grocery,40,Refined sunflower oil,105,500,ml,,5,15121910,5,yes,oil-500ml.jpg|oil-500ml-back.jpg,FORTUNE-OIL,\n" +
+  "OIL-1L,Fortune Sunflower Oil,185,Grocery,25,Refined sunflower oil,205,1,l,,5,15121910,5,yes,oil-1l.jpg,FORTUNE-OIL,\n";
 
 function downloadTemplate() {
   const url = URL.createObjectURL(new Blob([TEMPLATE], { type: "text/csv" }));
@@ -35,6 +42,12 @@ function downloadTemplate() {
  * surprise: choosing a file runs a dry run (validate + count what would be
  * created/updated, listing every bad row with its line number), and only an
  * error-free file can then be imported. Rows are matched by SKU.
+ *
+ * Pictures: the CSV lists file names (images column); the seller selects those
+ * image files here too. Nothing is uploaded until "Import" — then each needed
+ * picture is uploaded once to the product-images bucket and the API receives the
+ * resulting links. Variants: rows sharing a variant_group become one product
+ * with a size/flavour picker.
  */
 export function ProductImport({
   shopId,
@@ -45,19 +58,22 @@ export function ProductImport({
   onClose: () => void;
   onImported: () => void;
 }) {
+  const { profile } = useAuth();
+  const [images, setImages] = useState<File[]>([]);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [csvText, setCsvText] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(text: string, dryRun: boolean) {
+  async function run(text: string, dryRun: boolean, imageMap: Record<string, string> = {}) {
     setBusy(true);
     setError(null);
     try {
       const res: ImportResult = await apiFetch("/dashboard/products/import", {
         method: "POST",
-        body: JSON.stringify({ shop_id: shopId, csv_text: text, dry_run: dryRun }),
+        body: JSON.stringify({ shop_id: shopId, csv_text: text, dry_run: dryRun, image_map: imageMap }),
       });
       setResult(res);
       if (res.applied) onImported();
@@ -87,7 +103,55 @@ export function ProductImport({
     await run(text, true);
   }
 
-  const ok = result && result.errors.length === 0 && result.to_create + result.to_update > 0;
+  function onImages(e: ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(f.name));
+    e.target.value = "";
+    if (picked.length === 0) return;
+    setImages((prev) => {
+      const byName = new Map(prev.map((f) => [f.name.toLowerCase(), f]));
+      picked.forEach((f) => byName.set(f.name.toLowerCase(), f)); // picking a file again replaces it
+      return Array.from(byName.values());
+    });
+  }
+
+  // File names are matched ignoring case, exactly like the server does.
+  const have = new Map(images.map((f) => [f.name.toLowerCase(), f]));
+  const needed = result?.image_files ?? [];
+  const neededLower = new Set(needed.map((n) => n.toLowerCase()));
+  const missing = needed.filter((n) => !have.has(n.toLowerCase()));
+  const unused = images.filter((f) => !neededLower.has(f.name.toLowerCase()));
+
+  const ok = !!result && result.errors.length === 0 && result.to_create + result.to_update > 0 && missing.length === 0;
+
+  async function doImport() {
+    if (!csvText || !result || !profile) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Upload each needed picture once, a few at a time. If any fails we stop BEFORE
+      // touching the catalogue, so nothing is half-imported.
+      const map: Record<string, string> = {};
+      const queue = [...needed];
+      const total = queue.length;
+      let done = 0;
+      setProgress({ done, total });
+      const worker = async () => {
+        while (queue.length > 0) {
+          const name = queue.shift() as string;
+          map[name] = await uploadProductImage(profile.id, have.get(name.toLowerCase()) as File);
+          done += 1;
+          setProgress({ done, total });
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      await run(csvText, false, map);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setProgress(null);
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -113,8 +177,16 @@ export function ProductImport({
                 New products need <b>sku, name, price, category</b>. Price is <b>excluding GST</b>; <b>gst_rate</b> can be 0,
                 0.25, 3, 5, 12, 18 or 28.
               </li>
+              <li>
+                <b>Pictures:</b> write each product&apos;s picture file names in the <b>images</b> column, separated by{" "}
+                <b>|</b> (e.g. <code>oil-500ml.jpg|oil-500ml-back.jpg</code>), then select those picture files below.
+              </li>
+              <li>
+                <b>Sizes / flavours:</b> give every row of the same product the same <b>variant_group</b> (e.g. an oil in 500
+                ml and 1 l). Each row keeps its own SKU, price, stock and pictures. The size label is filled in from{" "}
+                <b>unit_value</b> + <b>unit</b>, or write it in <b>variant_options</b> (e.g. <code>Size=500 ml</code>).
+              </li>
               <li>If any row has a problem nothing is imported — fix the file and choose it again.</li>
-              <li>Add photos afterwards by editing each product.</li>
             </ul>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -131,10 +203,28 @@ export function ProductImport({
               </label>
               {fileName && <span className="text-sm text-gray-500 truncate">{fileName}</span>}
             </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="cursor-pointer border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Select pictures
+                <input type="file" accept="image/*" multiple onChange={onImages} className="hidden" />
+              </label>
+              <label className="cursor-pointer border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Select a folder of pictures
+                <input
+                  type="file"
+                  multiple
+                  onChange={onImages}
+                  className="hidden"
+                  {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                />
+              </label>
+              {images.length > 0 && <span className="text-sm text-gray-500">{images.length} picture{images.length === 1 ? "" : "s"} selected</span>}
+            </div>
           </>
         )}
 
-        {busy && <p className="text-sm text-gray-500">Checking your file…</p>}
+        {busy && !progress && <p className="text-sm text-gray-500">Working…</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         {result && !result.applied && (
@@ -164,6 +254,40 @@ export function ProductImport({
                 </ul>
               </div>
             )}
+            {result.variant_groups.length > 0 && (
+              <div className="rounded-lg border border-gray-100 px-3 py-2 text-sm text-gray-700 space-y-1">
+                <p className="font-medium">
+                  {result.variant_groups.length} product{result.variant_groups.length === 1 ? "" : "s"} with sizes/flavours
+                </p>
+                <ul className="space-y-0.5">
+                  {result.variant_groups.map((g) => (
+                    <li key={g.name}>
+                      <b>{g.name}</b> — {g.options.join(" · ")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {needed.length > 0 && (
+              <div
+                className={`rounded-lg px-3 py-2 text-sm ${
+                  missing.length === 0 ? "bg-emerald-50 text-emerald-800" : "border border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                {missing.length === 0 ? (
+                  <>
+                    All <b>{needed.length}</b> pictures are selected.
+                  </>
+                ) : (
+                  <>
+                    <b>{needed.length - missing.length}</b> of <b>{needed.length}</b> pictures selected. Still needed:{" "}
+                    {missing.slice(0, 12).join(", ")}
+                    {missing.length > 12 ? `, and ${missing.length - 12} more` : ""} — use <b>Select pictures</b> above.
+                  </>
+                )}
+                {unused.length > 0 && <p className="text-xs mt-1 opacity-80">{unused.length} selected picture{unused.length === 1 ? " isn't" : "s aren't"} used by this file and will be skipped.</p>}
+              </div>
+            )}
             {result.preview.length > 0 && (
               <details className="text-sm text-gray-600">
                 <summary className="cursor-pointer">Preview first {result.preview.length} valid rows</summary>
@@ -178,6 +302,8 @@ export function ProductImport({
                         {p.action === "create" ? "New" : "Update"}
                       </span>
                       {p.sku} — {p.name ?? ""}
+                      {p.variant && <span className="text-gray-400"> · {p.variant}</span>}
+                      {p.images ? <span className="text-gray-400"> · {p.images} pic{p.images === 1 ? "" : "s"}</span> : null}
                     </li>
                   ))}
                 </ul>
@@ -189,10 +315,14 @@ export function ProductImport({
               </button>
               <button
                 disabled={!ok || busy || !csvText}
-                onClick={() => csvText && run(csvText, false)}
+                onClick={doImport}
                 className="bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2 disabled:opacity-40"
               >
-                {ok ? `Import ${result.to_create + result.to_update} products` : "Import"}
+                {progress
+                  ? `Uploading pictures ${progress.done}/${progress.total}…`
+                  : ok
+                    ? `Import ${result.to_create + result.to_update} products`
+                    : "Import"}
               </button>
             </div>
           </div>
@@ -201,7 +331,8 @@ export function ProductImport({
         {result?.applied && (
           <div className="space-y-3">
             <div className="rounded-lg bg-emerald-50 text-emerald-800 text-sm px-3 py-2">
-              Done — <b>{result.to_create}</b> created, <b>{result.to_update}</b> updated.
+              Done — <b>{result.to_create}</b> created, <b>{result.to_update}</b> updated
+              {result.image_files.length > 0 && <>, <b>{result.image_files.length}</b> pictures uploaded</>}.
             </div>
             <div className="flex justify-end">
               <button onClick={onClose} className="bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2">
