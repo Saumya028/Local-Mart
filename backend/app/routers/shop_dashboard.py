@@ -49,7 +49,16 @@ from app.schemas.dashboard import (
 )
 from app.schemas.order import DashboardOrderOut, EtaUpdate, OrderStatusUpdate
 from app.schemas.notification import OrderEventOut
-from app.core.product_csv import CsvError, is_own_image_url, parse_csv, plan_variants, resolve_images, validate_row
+from app.core.product_csv import (
+    MAX_IMAGES_PER_PRODUCT,
+    CsvError,
+    is_own_image_url,
+    match_images_by_sku,
+    parse_csv,
+    plan_variants,
+    resolve_images,
+    validate_row,
+)
 from app.schemas.product import ProductCreate, ProductDashboardOut, ProductImportRequest, ProductUpdate
 from app.schemas.return_request import ReturnRequestOut, ReturnStatusUpdate
 from app.schemas.shop import DashboardShopOut, ShopUpdate
@@ -656,9 +665,24 @@ async def import_products_csv(
             candidates.append({"line": line, "sku": sku_text, "key": key, "product": product, "clean": clean})
 
     # ---- pictures: file names -> links (names are looked up once the files are uploaded)
+    # A blank `images` cell falls back to matching the selected picture files by SKU
+    # (SKU.jpg = one picture, SKU_1.jpg / SKU_2.jpg = several); a filled cell always wins.
+    selected_files = list(dict.fromkeys([*payload.image_names, *image_map.keys()]))
+    by_sku = match_images_by_sku([c["clean"]["sku"] for c in candidates], selected_files) if selected_files else {}
     image_files: dict[str, str] = {}
     for c in candidates:
         tokens = c["clean"].pop("_images", None)
+        if tokens is None:
+            tokens = by_sku.get(c["key"]) or None
+            if tokens and len(tokens) > MAX_IMAGES_PER_PRODUCT and payload.image_mode == "all":
+                add_problems(
+                    c["line"],
+                    c["sku"],
+                    [f"{len(tokens)} pictures match this SKU — at most {MAX_IMAGES_PER_PRODUCT} per product (or choose “first picture only”)"],
+                )
+                tokens = tokens[:MAX_IMAGES_PER_PRODUCT]
+        if tokens and payload.image_mode == "first":
+            tokens = tokens[:1]
         c["image_tokens"] = tokens
         c["image_urls"] = None
         if tokens is not None:

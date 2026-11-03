@@ -426,3 +426,17 @@ create fresh shops through the UI.
 Launch & beyond — custom domain + SSL, a permanently-alive staging
 environment, and watching real usage to decide what actually needs
 scaling next, rather than pre-optimizing for load that doesn't exist yet.
+
+## Per-shop delivery radius (migration 0029)
+
+* Each shop sets its own **Delivery radius (km)** in Shop Dashboard → Store settings → Delivery area. Default 5 km (the old platform value), capped by the admin's *Max delivery radius* setting.
+* Customers only see shops (and their products) whose radius covers the customer's **delivery location**, chosen in the header: a saved address with a map pin, or "Use current location". Until a location is set, `/`, `/stores` and `/search` ask for one.
+* Saved addresses get their pin from the "Use my current location" button (new address form, or My Account → Addresses → "Pin to my current location" for old ones).
+* Checkout refuses a delivery order if the chosen address is outside a shop's radius (pickup is exempt), and `/orders/quote` shows the problem live.
+* Run `alembic upgrade head` (head = 0029). Shops without a saved map location never appear to customers.
+
+## Bulk upload: one or several pictures per product
+
+* **By SKU (no CSV typing):** leave the `images` cell empty and name the picture files after the SKU — `OIL-500ML.jpg` = one picture; `OIL-500ML_1.jpg`, `OIL-500ML_2.jpg` (also `-1`, ` 1`, ` (1)`) = several, in number order.
+* **By file name in the CSV:** `images` = `oil.jpg|oil-back.jpg` as before. A filled cell always wins over SKU matching.
+* **Pictures per product** choice in the import dialog: *Use all pictures* (up to 8) or *First picture only*.

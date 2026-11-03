@@ -107,7 +107,7 @@ Same three-terminal setup as before — see the folder READMEs.
 
 ## Verifying this step worked
 
-1. `cd backend && pip install -r requirements-dev.txt && ruff check . && pytest tests/ -v` — should be clean, 9 tests passing.
+1. `cd backend && pip install -r requirements-dev.txt && ruff check . && pytest tests/ -v` — should be clean (the integration tests need Postgres + Redis running and skip otherwise).
 2. `cd frontend && npm install && npm run lint && npx tsc --noEmit && npm run build` — should be clean (a handful of known, tracked lint *warnings* are fine — see `frontend/README.md`; zero *errors*).
 3. Push a commit (or open a PR) and confirm `.github/workflows/ci.yml` runs both jobs green.
 4. Hit checkout 11 times in a row as the same user within a minute — the 11th should return `429`.
@@ -126,3 +126,81 @@ Launch & beyond — custom domain + SSL on both frontend and backend, a
 staging environment kept alive permanently, and then watching real
 usage to decide what actually needs scaling, rather than pre-optimizing
 for load that doesn't exist yet.
+
+
+## Sponsored (paid-priority) shops
+
+Shop owners buy promotion themselves: **Shop Dashboard -> Promote** -> pick a
+plan -> pay. The moment the payment is verified the shop ranks above
+non-sponsored shops (product search, `/stores`, landing page) until the plan's
+days run out. Customers see no "Sponsored" label — it only changes the order
+(and the public API doesn't expose it). Renewing early stacks days
+on the current end date. Admins don't grant it: **Admin -> Manage Shops**
+shows each shop's status (Active until / Expired / Not purchased), a
+**Sponsorships** sub-tab lists who bought what and total revenue, and
+**Admin -> Settings -> Shop Promotion Plans** edits plan prices. Admin can
+"End promotion" for moderation only.
+
+Search ranking: in-stock first, then sponsored shops, then name matches, then
+nearest (when the customer shares their location, results are limited to
+shops within the delivery radius) or best-rated.
+
+Setup: `alembic upgrade head` (migrations 0018, 0019; seeds 3 placeholder plans:
+Rs 199 / 599 / 1499 — change them in Settings). Payments:
+
+- **Real money:** set `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (and
+  `RAZORPAY_WEBHOOK_SECRET`) in `backend/.env`. In the Razorpay dashboard add a
+  webhook to `POST https://<your-api>/sponsorship/webhook` for the
+  `payment.captured` event — it activates the plan even if the buyer closes the
+  tab right after paying.
+- **Local dev with no keys:** a clearly-labelled TEST mode activates plans
+  without charging. It is automatically disabled when `ENVIRONMENT=production`.
+
+## Promotional banners
+
+Shops buy banner space on pre-decided spots (home top, home middle, search
+top, stores top). Flow: **Shop Dashboard -> Banners** -> pick a spot, upload
+artwork -> **Admin -> Banners** approves or rejects it (with a reason) -> the
+owner pays (Razorpay, same keys as sponsorship) -> it runs for the spot's
+duration (30 days by default) -> the owner renews from the same screen.
+Approval comes before payment, so a rejected banner never needs a refund.
+
+Locality: a banner is shown only to customers within **Banner Visibility
+Radius** (Admin -> Settings, default 1 km) of the shop. The customer's browser
+shares a location (after they tap "Share your location"), rounded to ~100 m;
+the server does the distance check and does not store it. No location = no
+banners. Clicking a banner opens that shop's page. Owners see views/clicks.
+
+Setup: `alembic upgrade head` (migration 0020, seeds 4 placeholder spots at
+Rs 1999 / 1299 / 999 / 799 — edit under Admin -> Settings -> Banner Spots).
+The shop must have its map location (latitude/longitude) set, otherwise it
+can't request banners. Check everything end to end with
+`python backend/scripts/sponsorship_integration_check.py`.
+
+
+## Hardening pass 2
+
+See `backend/README.md` -> "Hardening pass 2". New env vars: `TRUSTED_PROXY_COUNT`,
+`ORDER_UNPAID_UPI_EXPIRY_MINUTES`, `ORDER_UNACTED_EXPIRY_HOURS`; frontend:
+`NEXT_PUBLIC_SENTRY_DSN` (optional). New migration `0023`. Security headers and
+Sentry are now actually configured in `frontend/next.config.js` /
+`instrumentation*.ts`. Schedule `python -m scripts.expire_unpaid_orders` every ~15 minutes.
+
+
+## Notifications & order history
+
+See `backend/README.md` -> "Notifications & order history". New migration `0024`. By default email is only
+*logged* (`EMAIL_PROVIDER=console`); set `EMAIL_PROVIDER` + credentials to send real email. The in-app bell
+works with no setup.
+
+
+## Shop profile, delivery pricing & time slots
+
+See `backend/README.md` -> "Shop profile, delivery pricing, ETA & time slots". New migration `0025`; no new env vars.
+Existing shops are unchanged until their owner opens **Store settings** (no hours = always open, no fee, no minimum, no slots).
+
+
+## Product pricing & low-stock alerts
+
+See `backend/README.md` -> "Product pricing, units, SKU/barcode & low-stock alerts". New migration `0026`; no new env vars.
+Existing products are unchanged until owners add an MRP/size; stock can no longer go negative.

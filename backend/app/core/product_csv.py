@@ -12,13 +12,17 @@ Columns (header names are case-insensitive; spaces/dashes read as "_"):
   stock_qty, description, mrp, unit_value, unit, barcode,
   gst_rate, hsn_code, low_stock_threshold, is_active
 
-  images          file names of the product's pictures, separated by |
+  images          OPTIONAL. File names of the product's pictures, separated by |
                   (e.g. oil-500.jpg|oil-500-back.jpg). The seller selects those
                   image files together with the CSV; the browser uploads them and
                   the API receives the resulting links in `image_map`. Every row
                   (including each variant) has its OWN images; blank = none (on
                   an update: blank = leave the product's images alone, filled =
                   REPLACE them). Links to other websites are not accepted.
+                  Leave it blank to let the pictures find their product by SKU
+                  instead (see match_images_by_sku): SKU.jpg = one picture,
+                  SKU_1.jpg, SKU_2.jpg ... = several, in that order. A filled
+                  cell always wins over name matching.
   variant_group   the same name on every row that is a size/flavour of ONE product
                   (e.g. FORTUNE-OIL on the 500 ml row and the 1 l row). At least
                   two rows per group.
@@ -204,6 +208,36 @@ def resolve_images(tokens: list[str], image_map: dict[str, str], *, check_files:
         else:
             problems.append(f"images: '{token}' wasn't uploaded — select that file together with the CSV")
     return urls, problems
+
+
+_NUMBERED = re.compile(r"^(?P<base>.+?)(?:[ _-]+|\s*\()(?P<n>\d{1,2})\)?$")
+
+
+def match_images_by_sku(skus: list[str], filenames: list[str]) -> dict[str, list[str]]:
+    """Attach picture files to products by NAME, so the CSV needn't list them.
+
+        oil-500.jpg                 -> SKU "OIL-500"   (the main picture)
+        oil-500_1.jpg, oil-500_2.jpg (also -1 / " 1" / " (1)") -> its 1st, 2nd ... picture
+
+    One file = one picture, several numbered files = several pictures: the seller
+    decides just by which files they select. Case is ignored. A file whose whole
+    name is a SKU belongs to that SKU, even if it also looks like "<other sku>-<n>".
+    Returns {sku_lowercase: [file names in display order]}; SKUs with no file are absent.
+    """
+    known = {s.lower() for s in skus if s}
+    found: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for name in filenames:
+        base_name = re.split(r"[\\/]", name)[-1].strip()
+        if not base_name.lower().endswith(IMAGE_EXTENSIONS):
+            continue
+        stem = base_name.rsplit(".", 1)[0].strip().lower()
+        if stem in known:
+            found[stem].append((0, base_name.lower(), base_name))
+            continue
+        m = _NUMBERED.match(stem)
+        if m and m.group("base").strip() in known:
+            found[m.group("base").strip()].append((int(m.group("n")), base_name.lower(), base_name))
+    return {sku: [name for _, _, name in sorted(items)] for sku, items in found.items()}
 
 
 def _label(options: dict[str, str]) -> str:

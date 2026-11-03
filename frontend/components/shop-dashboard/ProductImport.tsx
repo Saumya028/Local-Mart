@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { uploadProductImage } from "@/lib/imageUpload";
@@ -60,6 +60,8 @@ export function ProductImport({
 }) {
   const { profile } = useAuth();
   const [images, setImages] = useState<File[]>([]);
+  // The seller's choice: use every matching picture of a product, or only its first.
+  const [imageMode, setImageMode] = useState<"all" | "first">("all");
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [csvText, setCsvText] = useState<string | null>(null);
@@ -67,13 +69,26 @@ export function ProductImport({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(text: string, dryRun: boolean, imageMap: Record<string, string> = {}) {
+  async function run(
+    text: string,
+    dryRun: boolean,
+    imageMap: Record<string, string> = {},
+    names: string[] = images.map((f) => f.name),
+    mode: "all" | "first" = imageMode,
+  ) {
     setBusy(true);
     setError(null);
     try {
       const res: ImportResult = await apiFetch("/dashboard/products/import", {
         method: "POST",
-        body: JSON.stringify({ shop_id: shopId, csv_text: text, dry_run: dryRun, image_map: imageMap }),
+        body: JSON.stringify({
+          shop_id: shopId,
+          csv_text: text,
+          dry_run: dryRun,
+          image_map: imageMap,
+          image_names: names,
+          image_mode: mode,
+        }),
       });
       setResult(res);
       if (res.applied) onImported();
@@ -114,6 +129,24 @@ export function ProductImport({
     });
   }
 
+  // Pictures can be matched to products by SKU, so picking pictures (or changing the
+  // one/several choice) after the CSV re-checks the file. Skipped on first render.
+  const lastKey = useRef("");
+  useEffect(() => {
+    const key = `${imageMode}|${images.map((f) => f.name).join(",")}`;
+    if (!csvText || result?.applied) {
+      lastKey.current = key;
+      return;
+    }
+    if (key === lastKey.current) return;
+    lastKey.current = key;
+    const t = setTimeout(() => {
+      run(csvText, true);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images, imageMode, csvText]);
+
   // File names are matched ignoring case, exactly like the server does.
   const have = new Map(images.map((f) => [f.name.toLowerCase(), f]));
   const needed = result?.image_files ?? [];
@@ -144,7 +177,7 @@ export function ProductImport({
         }
       };
       await Promise.all([worker(), worker(), worker()]);
-      await run(csvText, false, map);
+      await run(csvText, false, map, images.map((f) => f.name), imageMode);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -178,8 +211,11 @@ export function ProductImport({
                 0.25, 3, 5, 12, 18 or 28.
               </li>
               <li>
-                <b>Pictures:</b> write each product&apos;s picture file names in the <b>images</b> column, separated by{" "}
-                <b>|</b> (e.g. <code>oil-500ml.jpg|oil-500ml-back.jpg</code>), then select those picture files below.
+                <b>Pictures — one or several per product, your choice.</b> Either name the picture files after the{" "}
+                <b>SKU</b> and leave the <b>images</b> column empty — <code>OIL-500ML.jpg</code> for one picture, or{" "}
+                <code>OIL-500ML_1.jpg</code>, <code>OIL-500ML_2.jpg</code> … for several — or write the file names in the{" "}
+                <b>images</b> column separated by <b>|</b> (e.g. <code>oil.jpg|oil-back.jpg</code>). Then select the picture
+                files below. A filled <b>images</b> cell always wins over name matching.
               </li>
               <li>
                 <b>Sizes / flavours:</b> give every row of the same product the same <b>variant_group</b> (e.g. an oil in 500
@@ -221,6 +257,22 @@ export function ProductImport({
               </label>
               {images.length > 0 && <span className="text-sm text-gray-500">{images.length} picture{images.length === 1 ? "" : "s"} selected</span>}
             </div>
+
+            <fieldset className="text-sm text-gray-700 space-y-1">
+              <legend className="font-medium">Pictures per product</legend>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="radio" name="imageMode" checked={imageMode === "all"} onChange={() => setImageMode("all")} className="mt-1" />
+                <span>
+                  <b>Use all pictures</b> — a product gets every picture that matches it (up to 8)
+                </span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="radio" name="imageMode" checked={imageMode === "first"} onChange={() => setImageMode("first")} className="mt-1" />
+                <span>
+                  <b>First picture only</b> — one picture per product, even if more files match
+                </span>
+              </label>
+            </fieldset>
           </>
         )}
 

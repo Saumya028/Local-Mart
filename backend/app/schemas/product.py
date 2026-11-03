@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 from datetime import datetime
 from decimal import Decimal
 
@@ -261,3 +262,9 @@ class ProductImportRequest(BaseModel):
     # browser uploaded to our product-images bucket. Only needed when dry_run is
     # false; every link is checked to be inside our own bucket.
     image_map: dict[str, str] = Field(default_factory=dict, max_length=5000)
+    # File names of every picture the seller selected. Rows whose `images` cell is
+    # blank get their pictures matched by SKU from these (SKU.jpg, SKU_1.jpg, ...).
+    image_names: list[str] = Field(default_factory=list, max_length=5000)
+    # The seller's choice: "all" = use every matching picture (up to 8 per product),
+    # "first" = only the first picture of each product.
+    image_mode: Literal["all", "first"] = "all"
