@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -77,6 +77,14 @@ class Order(Base):
     # address on this order" and "address snapshot was somehow blank"
     # can never be confused.
     delivery_address: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Coordinates of that address, frozen at checkout from the saved
+    # address's lat/lng (same reason as the text snapshot: editing or
+    # deleting the saved address later must not move an old order). Null for
+    # pickup orders, for addresses saved without a location, and for orders
+    # placed before this column existed — the shop's "Open in Maps" button
+    # then falls back to searching the address text.
+    delivery_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Set once, the moment a shop owner (or staff) moves this order into

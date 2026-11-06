@@ -120,6 +120,10 @@ export type DashboardOrder = {
   slot_start?: string | null;
   slot_end?: string | null;
   delivery_address: string | null;
+  // Coordinates of that address, frozen at checkout. Null for pickup orders,
+  // addresses saved without a location, and orders from before this existed.
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
   buyer_email: string;
   buyer_name: string | null;
   item_count: number;

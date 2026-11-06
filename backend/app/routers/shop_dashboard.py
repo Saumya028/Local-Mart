@@ -886,6 +886,8 @@ def _dashboard_order_dict(
         "slot_start": order.slot_start,
         "slot_end": order.slot_end,
         "delivery_address": order.delivery_address,
+        "delivery_lat": order.delivery_lat,
+        "delivery_lng": order.delivery_lng,
         "created_at": order.created_at,
         "buyer_email": buyer_email,
         "buyer_name": buyer_name,
@@ -1595,6 +1597,8 @@ async def update_return_status(
                 total_amount=exchange_price * rr.quantity,
                 subtotal_amount=exchange_price * rr.quantity,
                 delivery_address=delivery_address,
+                delivery_lat=original_order.delivery_lat if original_order else None,
+                delivery_lng=original_order.delivery_lng if original_order else None,
             )
             db.add(new_order)
             await db.flush()

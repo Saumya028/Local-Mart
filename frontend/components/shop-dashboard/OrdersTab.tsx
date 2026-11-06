@@ -32,6 +32,55 @@ const FILTERS: { key: string; label: string; statuses?: string[] }[] = [
 // before the order leaves for delivery / is ready for pickup.
 const SHOP_CANCELABLE = new Set(["confirmed", "preparing", "packing"]);
 
+// Opens the drop-off point in the phone's / browser's maps app. Uses the exact
+// coordinates the customer captured when they saved the address; older orders
+// (or addresses saved without a location) fall back to searching the text.
+function mapsUrl(o: DashboardOrder): string | null {
+  if (o.delivery_lat != null && o.delivery_lng != null) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${o.delivery_lat},${o.delivery_lng}`;
+  }
+  if (o.delivery_address) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.delivery_address)}`;
+  }
+  return null;
+}
+
+function DeliveryAddress({ order }: { order: DashboardOrder }) {
+  if (order.fulfillment_type === "pickup") {
+    return <p className="text-xs text-gray-400">Customer collects from the shop</p>;
+  }
+  if (!order.delivery_address) {
+    return <p className="text-xs text-gray-400">No address on this order</p>;
+  }
+  const url = mapsUrl(order);
+  const exact = order.delivery_lat != null && order.delivery_lng != null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm text-gray-700 whitespace-pre-line break-words">{order.delivery_address}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+          >
+            <span aria-hidden>📍</span> Open in Maps
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={() => navigator.clipboard?.writeText(order.delivery_address ?? "")}
+          className="text-xs text-gray-400 underline"
+        >
+          Copy
+        </button>
+        {!exact && <span className="text-[11px] text-amber-600">Approximate: no pin saved</span>}
+      </div>
+    </div>
+  );
+}
+
 function InvoiceLink({ order }: { order: DashboardOrder }) {
   if (order.status === "cancelled") return null;
   return (
@@ -455,6 +504,10 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                 <div className="rounded-lg bg-gray-50 px-3 py-2">
                   <OrderItemsList items={o.items} />
                 </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Deliver to</p>
+                  <DeliveryAddress order={o} />
+                </div>
                 <div>{statusCell(o)}</div>
                 {actionCell(o)}
               </div>
@@ -469,6 +522,7 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                   <th className="px-5 py-3 font-medium">Customer</th>
                   <th className="px-5 py-3 font-medium">Type</th>
                   <th className="px-5 py-3 font-medium">Items</th>
+                  <th className="px-5 py-3 font-medium">Deliver to</th>
                   <th className="px-5 py-3 font-medium">Total</th>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Time</th>
@@ -504,6 +558,9 @@ export function OrdersTab({ shopId }: { shopId: string }) {
                       </td>
                       <td className="px-5 py-3 min-w-[200px]">
                         <OrderItemsList items={o.items} />
+                      </td>
+                      <td className="px-5 py-3 min-w-[220px] max-w-[280px]">
+                        <DeliveryAddress order={o} />
                       </td>
                       <td className="px-5 py-3 font-medium text-gray-800">{formatINR(o.total_amount)}</td>
                       <td className="px-5 py-3">

@@ -228,6 +228,8 @@ async def checkout(
         # touches the address book.
         needs_delivery_address = bool(items_by_shop.keys() - pickup_shop_ids)
         delivery_address_snapshot: str | None = None
+        delivery_lat: float | None = None
+        delivery_lng: float | None = None
         if needs_delivery_address:
             if payload.address_id is None:
                 raise HTTPException(
@@ -238,6 +240,7 @@ async def checkout(
             if address is None or address.user_id != user.id:
                 raise HTTPException(status_code=404, detail="Address not found")
             delivery_address_snapshot = address.snapshot()
+            delivery_lat, delivery_lng = address.lat, address.lng
             # A shop can only take a DELIVERY order if the address is inside
             # ITS delivery radius (pickup shops are exempt).
             for shop_id in items_by_shop.keys() - pickup_shop_ids:
@@ -259,6 +262,8 @@ async def checkout(
                 total_amount=Decimal("0"),  # filled in below once we know the line totals
                 fulfillment_type="pickup" if is_pickup else "delivery",
                 delivery_address=None if is_pickup else delivery_address_snapshot,
+                delivery_lat=None if is_pickup else delivery_lat,
+                delivery_lng=None if is_pickup else delivery_lng,
                 eta_at=plans[shop_id].eta_at,
                 slot_start=plans[shop_id].slot[0] if plans[shop_id].slot else None,
                 slot_end=plans[shop_id].slot[1] if plans[shop_id].slot else None,

@@ -199,6 +199,10 @@ class DashboardOrderOut(OrderOut):
 
     buyer_email: str | None
     buyer_name: str | None = None
+    # Where to deliver, as coordinates (see Order.delivery_lat). Shop-facing
+    # only — the customer already knows their own address.
+    delivery_lat: float | None = None
+    delivery_lng: float | None = None
     item_count: int = 0
     items: list[DashboardOrderItemOut] = []
     payer_reference: str | None = None
